@@ -3,7 +3,7 @@ const siteMetadata = {
   title: "Bellwether's Blog",
   author: 'Ritu Raj',
   headerTitle: "Bellwether's Blog",
-  description: 'A brief into what i do ',
+  description: ' Latest Blog Entries',
   language: 'en-us',
   theme: 'system', // system, dark or light
   siteUrl: 'https://tailwind-nextjs-starter-blog.vercel.app', // replace this wth domain
