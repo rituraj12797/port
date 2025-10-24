@@ -1,0 +1,34 @@
+--- 
+title: "AWS outage"
+date: '2025-10-24'
+tags: ['Cloud', 'System Design']
+draft: false
+summary: " The reason behind AWS's recent outage was result of crashing of a SPOF (single point of failure) of the AWS system leading to cascading failure of services and what can we learn from it."
+---
+
+## Introduction
+
+The Internet experienced a major AWS outage that affected services such as Snapchat, Zoom, Pinterest, Fortnite, Slack, and many others. This post examines the root cause of the failure and the lessons we can draw from it.
+
+## The issue - a bad update to DynamoDB
+
+The outage began when services could not find or connect to DynamoDB endpoints. A faulty update introduced incorrect records for DynamoDB endpoint mappings in AWS's DNS. As a result, services like IAM and EC2 could not resolve the correct DynamoDB endpoints. Many AWS services rely on DynamoDB for configuration metadata and state files and when they timed out, higher-level services began to fail.
+
+## Result - collapsing dependency chains
+
+Because AWS's internal services depend on each other, failures in core services caused cascading outages. Interdependent chains broke as services that relied on global configuration or metadata were unable to proceed, causing widespread unavailability.
+
+## What is a SPOF (DNS in this case)
+
+A single point of failure (SPOF) is a component whose failure causes the entire system to fail. think of it like an articulation point: when it goes down, connections break in a graph. Many services depended on DNS as a single source of truth incorrect DNS entries made those services unable to locate required resources, turning DNS into a SPOF in this incident.
+
+## Why a single-region outage affected multi-AZ architectures
+
+Although the failure was limited to the us-east-1 region, its impact was amplified because that region hosts many global services. When applications deployed across multiple Availability Zones need global data, they often depend on services in us-east-1. With those global services unavailable, applications in other AZs experienced failures as well. This interdependency is what led to the large-scale impact on 20 October 2025.
+
+## Fun Part 
+Some organizations hosted their status pages on AWS, so when AWS services failed those status pages also went offline. In many cases monitoring records were not written during the outage window, which led some observers to mistakenly conclude there had been no outage. It is like a guard who fell asleep and therefore did not see the thief. 
+
+Also smart bed of some people were linked to services dependent on aws which resulted in half inclines beds hindering with sleep of many sleep8 customers
+
+![AWS outage tweet](/static/images/bed_tweet.png)
