@@ -50,7 +50,7 @@ After an Enactor successfully applies its new plan to all endpoints, it kicks of
 I will try to explain in 10 steps with an example what happened and how the systems went down:
 
 1.  Say the planner produced a **Plan A (7448)** $\rightarrow$ An **Enactor (1)** picked this up. It checked if it's latest (Yes it is).
-2.  Enactor 1 started iterating on its entries & applying them to Route 53. But this was **slow** due to locking & writing by other enactors also.
+2.  Enactor 1 started iterating on its entries & applying them to Route 53. But this was **slow** (specific reason or this is still un-clear).
 3.  In the meantime, the Planner produced new plans like 7459 ( Plan C), 7462 ( Plan D).
 4.  A new **Enactor (2)** picked up **Plan D (7462)** & now since this is the latest, it also started to write to Route 53.
 5.  Now Enactor 1 and Enactor 2 are both writing $\rightarrow$ 1 is slow, 2 is **fast** $\rightarrow$ Enactor 2 carries on & **completed writing** (Entered, locked, updated records).
