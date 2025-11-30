@@ -1,6 +1,15 @@
+---
+title: CloudFlare Outage
+date: 2025-11-29
+tags: ['Cloud', 'System Design']
+draft: false
+summary: This was the second major outage to affect nearly a quarter of the internet, in this blog we will dive deep into why Cloudflare went down
+---
+
+
 # Cloudflare Outage Breakdown
 
-![Cloud Flare](/public/static/images/cloud_flare/cloud_flare_icon.jpg)
+![Cloud Flare](/static/images/cloud_flare/cloud_flare_icon.jpg)
 
 ## 1. The Incident: What Happened
 
@@ -65,7 +74,7 @@ Before going into the technical trenches of how the chaos unfolded, we wil look 
 
 When the data to be stored is humongous, databases go for horizontal scaling; this method is known as sharding.
 
-![Sharding](/public/static/images/cloud_flare/sharding.png)
+![Sharding](/static/images/cloud_flare/sharding.png)
 
 Basically, instead of creating very large storage on a single machine or server, a cluster is established consisting of multiple smaller servers. Each of these stores a part of the data. These smaller units are called shards, and this breaking of a large database into a cluster of nodes is known as sharding.
 
@@ -78,7 +87,7 @@ The benefits include:-
 
 This is a common design pattern which is used in distributed systems where data needs to be fetched from multiple servers at once and aggregated.
 
-![Scatter Gather Pattern](/public/static/images/cloud_flare/scatter-gather.png)
+![Scatter Gather Pattern](/static/images/cloud_flare/scatter-gather.png)
 
 ### How does this work?
 
@@ -117,7 +126,7 @@ This is the main data storage unit which is a database engine based on, when we 
 
 Now we will look how a query actually gets executed on this architecture, but first let look at a illustrative example of who the architecture looks like :- 
 
-![ClickHouse's Distributed Analytics DB Architecture](/public/static/images/cloud_flare/clickhouse_architecture.png)
+![ClickHouse's Distributed Analytics DB Architecture](/static/images/cloud_flare/clickhouse_architecture.png)
 
 **An exemplary scenario to visualize how the system works under a real-time scenario:**
 
@@ -134,11 +143,11 @@ This can be visualized in a 2 phase process :-
 
 Phase 1
 ---
-![Query Execution Phase One](/public/static/images/cloud_flare/query_exec_one.png)
+![Query Execution Phase One](/static/images/cloud_flare/query_exec_one.png)
 ---
 Phase 2
 ---
-![Query Execution Phase Two](/public/static/images/cloud_flare/query_exec_two.png)
+![Query Execution Phase Two](/static/images/cloud_flare/query_exec_two.png)
 
 *** 
 
@@ -234,7 +243,7 @@ This "flickering" behavior is explained by the interaction between the **Load Ba
 1.  **Crash:** When the Load Balancer selected an **Updated Node** as the Coordinator, the query returned duplicates. The Feature File size doubled, causing the Bot Management system to panic.
 2.  **Recovery:** Five minutes later, if the Load Balancer selected a **Legacy Node**, the query returned clean data. The system generated a valid file, and traffic recovered.
 
-![Oscillatory Behavior](/public/static/images/cloud_flare/load_balancer.jpg)
+![Oscillatory Behavior](/static/images/cloud_flare/load_balancer.jpg)
 
 **The Saturation:**
 As time passed, the update propagated to more and more nodes. The probability of hitting a "Good Node" dropped to zero. Eventually, every node in the cluster was updated, and the graph transitioned from an oscillatory pattern to a complete **saturation** of 500 errors.
