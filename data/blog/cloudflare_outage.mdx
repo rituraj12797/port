@@ -36,6 +36,8 @@ It wasn't until **14:30 UTC** that the root cause was identified: not a cyber at
 
 ## 2 The Flow of Traffic
 
+![Flow Of Traffic](/static/images/cloud_flare/network_flow.jpg)
+
 To understand the scope of this outage, we need to look at the "well-defined path" every request takes when it hits Cloudflare’s network.
 
 1.  **The Termination:** First, the request hits the **HTTP and TLS layer**. This handles the initial handshake and decryption.
