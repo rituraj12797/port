@@ -234,6 +234,8 @@ The script blindly ingested this list. It assumed that if the database listed a 
 
 One of the most confusing aspects of the incident was the graph of 500 errors. It didn't shoot up and stay up; it oscillated.
 
+![Oscillatory Errors](/static/images/cloud_flare/behavior.jpg)
+
 This "flickering" behavior is explained by the interaction between the **Load Balancer** and the **Gradual Rollout** of the database update.
 
 * **The Rotation Wheel:** The automation script runs every 5 minutes. Each time it runs, the Load Balancer randomly selects one ClickHouse node to act as the **Coordinator** for that specific query.
