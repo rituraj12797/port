@@ -1,7 +1,7 @@
 ---
 title: "Lock Free Queues In C++"
 date: '2026-1-05'
-tags: ['C++', 'System Design', 'Lock Free', 'Ring Buffer']
+tags: ['C++', 'Low Level', 'Operating Systems']
 draft: false
 summary: "Exploring deep OS internals and working on a Low latency project in C++, implementing a lock-free communication mechanism between threads using ring buffers."
 ---
@@ -138,7 +138,7 @@ This is what we call a **BLOCKED** state.
 Even though Reader B was ready to work, it was stopped because Writer A was asleep. This dependency kills latency. Mutex locks cannot prevent this.
 
 So, we define something called **"Non-Blocking Synchronization Mechanisms"**.
-This primarily consists of 2 types: **Lock-Free** and **Wait-Free** algorithms. (I could continue discussing these here, but the blog will become large; let's save this one for later `;)`).
+This primarily consists of 2 types: **Lock-Free** and **Wait-Free** algorithms. (I could continue discussing these here, but the blog will become large; let's save this one for later `;)` ).
 
 So we will focus majorly on Lock-Free algorithms here.
 
@@ -209,7 +209,7 @@ Below is my implementation of this queue with comments for details.
 namespace internal_lib {
     template<typename T>
 
-    class LFQueue final { // why final here ===> final is a keyword that means no other class is going to inherit this class hence the compiler devirtualizes it ==> performance gains 
+    class LFQueue final { 
     private :
         std::vector<T> store_; 
         std::atomic<size_t> next_index_to_read = {0};
@@ -218,9 +218,7 @@ namespace internal_lib {
     public : 
         explicit LFQueue(std::size_t capacity ) : store_(capacity, T()){  
             // initialize size here 
-            // explicit used here to prevent any auto type conversion 
-            // initialized the queue with a certain capacity
-            // empty body 
+            // explicit used here to prevent any auto type conversion
         }
 
         // delete extra constructors
@@ -257,9 +255,12 @@ namespace internal_lib {
 }
 
 ```
+
 YAYYYYYY!!!! We have built something really cool, haven't we?
 
+We will Look into the performance and code aspects of it in next part of this blog, stay tuned.
 
-### 11. Performance Comparison
+### 11. Extras 
 
-Below is a table obtained after benchmarking this queue against `std::queue` + Mutex.
+As always I conclude this blog with a fact that one of my friend told me about starving process - It is rumored that when the IBM 7094 mainframe at the Massachusetts Institute of Technology (MIT) was finally shut down in 1973, a very low-priority process was discovered that had been submitted in 1967 and had not yet been run to completion.
+
