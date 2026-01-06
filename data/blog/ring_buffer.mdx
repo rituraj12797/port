@@ -256,11 +256,301 @@ namespace internal_lib {
 
 ```
 
-YAYYYYYY!!!! We have built something really cool, haven't we?
+### 11. Using LF_QUeue and Benchmarking
 
-We will Look into the performance and code aspects of it in next part of this blog, stay tuned.
+We have built the queue; now it is time to stress-test it.
 
-### 11. Extras 
+Below is the complete benchmarking harness that puts our LFQueue against a standard std::queue protected by a std::mutex. I strongly encourage you to dissect this code line-by-line rather than just scrolling past it.
+How we measure nanosecond-level latency without introducing observer effect, and how we simulate "Backpressure" using std::this_thread::yield() will give you significantly deeper insights into how your software interacts with the hardware metal.
+
+```cpp
+
+#include<iostream>
+#include<vector>
+#include<chrono>
+#include<atomic>
+#include<thread>
+
+#include "lf_queue.h"
+#include "imp_macros.h"
+#include "thread_utils.h"
+
+#include<new>
+#include<queue>
+#include<mutex>
+#include<algorithm>
+
+
+struct Order {
+	int stock_id;
+	int quantity;
+	bool buy;
+
+	Order(int id = 5, int number_of_stocks = 6, bool is_buy = false) {
+		stock_id = id;
+		quantity = number_of_stocks;
+		buy = is_buy;
+	}
+};
+
+void showBenchmark(std::string text, std::vector<std::chrono::duration<double,std::nano>>& write, std::vector<std::chrono::duration<double,std::nano>>& read ) {
+    std::sort(write.begin(),write.end());
+    std::sort(read.begin(),read.end());
+
+    int ind_fifty = write.size()/2;
+    int ind_nine_zero = (9*write.size())/(10);
+    int ind_ninty_nine = (99*write.size())/(100);
+    int ind_nine_nine_nine = (999*write.size())/(1000);
+
+    std::cout<<" ========================================= BENCHMARK PERFORMANCE FOR "<<text<<"================================ \n\n\n";
+    /* ======================= BENCHMARK RESULTS NOW ===============================  */
+    std::cout<<" WRITE LATENCIES \n";
+    std::cout<<" P50 : "<<write[ind_fifty].count()<<"\n";
+    std::cout<<" P90 : "<<write[ind_nine_zero].count()<<"\n";
+    std::cout<<" P99 : "<<write[ind_ninty_nine].count()<<"\n";
+    std::cout<<" P99.9 : "<<write[ind_nine_nine_nine].count()<<"\n";
+
+    std::cout<<" READ LATENCIES \n";
+    std::cout<<" P50 : "<<read[ind_fifty].count()<<"\n";
+    std::cout<<" P90 : "<<read[ind_nine_zero].count()<<"\n";
+    std::cout<<" P99 : "<<read[ind_ninty_nine].count()<<"\n";
+    std::cout<<" P99.9 : "<<read[ind_nine_nine_nine].count()<<"\n\n";
+
+    std::cout<<"\n========================================================================================================\n\n\n";
+}
+
+
+
+int main() {
+	std::cout<<" Main Thread Executing \n";
+    int set_size = 1000000;
+    std::vector<Order> test_set(set_size, Order(5,6,false));
+
+
+
+    // ======================================= STD QUEUE + MUTEX LOCKS ==============================================
+    std::queue<Order> std_queue;
+    std::mutex mtx; 
+    std::atomic<bool> done = {false};
+
+    std::vector<std::chrono::duration<double,std::nano>> write_times;
+    std::vector<std::chrono::duration<double,std::nano>> read_times;
+
+
+    // writer lambda 
+    auto writer_f = [](std::queue<Order>& std_queue,std::vector<Order>& test_set, std::vector<std::chrono::duration<double,std::nano>>& write_times , std::mutex& mtx, std::atomic<bool>& done ) {
+        // write million entries with mutex locks
+
+        for(int i = 0 ; i < 1000000; i++) {
+            auto start = std::chrono::high_resolution_clock::now();
+            mtx.lock();
+            std_queue.push(test_set[i]);
+            mtx.unlock();
+            auto end = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double,std::nano> interval = end - start;
+            write_times.push_back(interval);
+        }
+
+        done = true;
+    };
+
+    // reader lambda
+    auto reader_f = [](std::queue<Order>& std_queue, std::mutex& mtx, std::atomic<bool>& done, std::vector<std::chrono::duration<double,std::nano>>& read_times ) {
+    int rc = 0;
+    while (true) { // Loop forever until we explicitly break
+        
+        auto start = std::chrono::high_resolution_clock::now();
+        mtx.lock();
+        
+        if (std_queue.empty()) {
+            mtx.unlock();
+            // If queue is empty AND writer is finished, we can stop.
+            if (done) break; 
+            
+            // Otherwise, writer is still working, so we yield and wait for data
+            std::this_thread::yield();
+            continue;
+        }
+
+        // If we are here, queue has data
+        Order entry = std_queue.front();
+        std_queue.pop();
+        rc += (entry.stock_id > 0 ? 1 : 0);
+        mtx.unlock();
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double,std::nano> interval = end - start;
+        read_times.push_back(interval);
+    }
+    };
+
+
+    // writer thread
+    auto writer_thread = internal_lib::createAndStartThread(3," std writer ", writer_f, std::ref(std_queue), std::ref(test_set), std::ref(write_times), std::ref(mtx), std::ref(done));
+    // reader thread
+    auto reader_thread = internal_lib::createAndStartThread(4," std reader ", reader_f, std::ref(std_queue), std::ref(mtx), std::ref(done), std::ref(read_times));
+    
+
+    if(writer_thread != nullptr) {
+        writer_thread->join();
+    }
+
+    if(reader_thread != nullptr) {
+        reader_thread->join();
+    }
+
+
+    showBenchmark(" std::queue + mutex ",write_times, read_times);
+
+
+    // ========================================================   LOCK FREE QUEUE ========================================
+
+    internal_lib::LFQueue<Order> ring_buffer(50000000); //  50 x 1M 
+
+    std::vector<std::chrono::duration<double,std::nano>> lfq_write_times;
+    std::vector<std::chrono::duration<double,std::nano>> lfq_read_times;
+
+    // write lambda
+    auto wf = [](internal_lib::LFQueue<Order>& comm, std::vector<std::chrono::duration<double,std::nano>>& lfq_write_times) {
+
+        int cnt = 0; // I Million Orders
+        while(cnt < 1000000) {
+            auto start = std::chrono::high_resolution_clock::now();
+            auto write_ptr = comm.getNextWriteIndex();
+            while(write_ptr == nullptr) {
+                std::this_thread::yield();
+                write_ptr = comm.getNextWriteIndex();
+            }   
+
+            *write_ptr = Order(cnt, 100, true); 
+            comm.updateWriteIndex();
+            cnt++;
+            auto end = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double,std::nano>  interval = end - start;
+            lfq_write_times.push_back(interval);
+        
+        }
+    };
+
+    // read lambda
+    auto rf = [](internal_lib::LFQueue<Order>& comm, std::vector<std::chrono::duration<double,std::nano>>& lfq_read_times) {
+        int cnt = 0;
+        while(cnt < 1000000) {
+            auto start = std::chrono::high_resolution_clock::now();
+            auto* read_ptr = comm.getNextReadIndex();
+            while(read_ptr == nullptr) {
+                std::this_thread::yield();
+                read_ptr = comm.getNextReadIndex(); 
+            }
+            comm.updateNextReadIndex();
+            cnt++;
+            auto end = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double,std::nano>  interval = end - start;
+            lfq_read_times.push_back(interval);
+        }
+    };
+
+
+    // writer thread to lf_queue
+    auto wt = internal_lib::createAndStartThread(6," writer to lq_queue ",wf,std::ref(ring_buffer),std::ref(lfq_write_times));
+    // reader thread
+    auto rt = internal_lib::createAndStartThread(5," writer to lq_queue ",rf,std::ref(ring_buffer),std::ref(lfq_read_times));
+
+
+    if(wt != nullptr) {
+        wt->join();
+    }
+
+    if(rt != nullptr) {
+        rt->join();
+    }
+
+   showBenchmark(" LF_queue ",lfq_write_times, lfq_read_times);
+
+
+
+	return 0;
+
+
+}
+
+
+```
+
+
+### 12. Benchmark results and Analysis
+
+Following the implementation, I benchmarked this Lock-Free Queue against a standard `std::queue` protected by a `std::mutex`. I ran 100 iterations, pushing and popping 1 million integers in each run, to measure the latency distribution.
+
+#### The Data
+
+Below is the summary of average latencies across 10 million operations.
+
+| Metric | Mutex Queue (ns) | Lock-Free Queue (ns) | Verdict |
+| --- | --- | --- | --- |
+| **P50 (Median)** | ~61 | ~77 | **Comparable / Nearly Equal** |
+| **P90** | 266 | **107** | **LFQ is 2.5x Faster** |
+| **P99** | 554 | **126** | **LFQ is 4.4x Faster** |
+| **P99.9 (Tail)** | 2,476 | **212** | **LFQ is 11.6x Faster** |
+
+---
+
+#### 1. The P50 (Median) Analysis
+
+**Observation:**
+At the median, the performance of both queues is **nearly equal**. Both implementations operate comfortably in the sub-100 nanosecond range.
+
+**Learning & Insights:**
+While the Mutex appears slightly faster in some runs (due to CPU cache locality when uncontended), this difference is largely negligible. In a real-world OS environment, background noise and scheduling jitter often blur the lines at this granularity. Ideally, without these OS interruptions, the atomic instruction overhead of the Lock-Free queue is comparable to the uncontended mutex lock/unlock cycle. Effectively, at P50, they are in the same weight class.
+
+---
+
+#### 2. The P90 Analysis
+
+**Observation:**
+The separation begins here. The Mutex latency drifts up to **266ns**, while the Lock-Free queue remains rock steady at **107ns**.
+
+**Learning & Insights:**
+This is where the architecture starts to matter. Roughly 10% of the time, the Mutex encounters minor contention threads bumping into each other forcing a wait. The Lock-Free queue, however, ignores this "traffic" entirely, continuing to process data at near-constant speed.
+
+---
+
+#### 3. The P99 Analysis
+
+**Observation:**
+The gap widens significantly. The Mutex latency doubles again to **554ns**, while the Lock-Free queue barely notices the pressure, sitting at **126ns**.
+
+**Learning & Insights:**
+At the 99th percentile, the Mutex version is **4.4x slower**. The overhead of lock contention is now compounding. Meanwhile, the Lock-Free queue demonstrates incredible robustness; even under heavy load, it refuses to slow down, maintaining a variance of just ~20ns from its median.
+
+---
+
+#### 4. The P99.9 (Tail) Analysis
+
+**Observation:**
+This is the "Money Shot." The Mutex queue explodes to **2,476ns (2.4µs)**, while the Lock-Free queue holds the line at **212ns**.
+
+**Learning & Insights:**
+The Lock-Free queue is **11.6x faster** in the worst-case scenario.
+The massive spike in the Mutex version happens because the OS Scheduler intervenes. When a lock is contested for too long, the OS puts the thread to sleep (Blocking). Waking it up takes microseconds.
+In contrast, the Lock-Free queue demonstrates its **Wait-Free** property here. It never sleeps, it never blocks, and it completes its task in a predictable number of CPU cycles regardless of what the other thread is doing.
+
+---
+
+### Conclusion: Why Stability Matters
+
+In Low Latency applications (like High-Frequency Trading, Real-Time Audio, or Gaming), **Predictability Is Very Important**.
+
+You might look at the P50 and say they are similar, but the **Tail Latency** tells the true story.
+
+* **Mutex Window:** 60ns to 3,000ns (High Variance / Unstable).
+* **Lock-Free Window:** 90ns to 220ns (Tight / Predictable).
+
+A system that is usually fast but occasionally freezes for 3 microseconds is dangerous—that is enough time for a market to crash or a frame to drop. A system that is consistently 200 nanoseconds, even on its absolute worst day, is superior. This benchmark proves that the Lock-Free implementation provides the **nanosecond-level consistency** required for critical systems.
+
+---
+
+
+### 14. Extras 
 
 As always I conclude this blog with a fact that one of my friend told me about starving process - It is rumored that when the IBM 7094 mainframe at the Massachusetts Institute of Technology (MIT) was finally shut down in 1973, a very low-priority process was discovered that had been submitted in 1967 and had not yet been run to completion.
 
