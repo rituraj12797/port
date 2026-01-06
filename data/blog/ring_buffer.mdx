@@ -161,7 +161,7 @@ We established two things:
 1. We have a **Single Producer Single Consumer (SPSC)** setup.
 2. We want to avoid locks to prevent blocking.
 
-**The Big Reveal:**
+**The Nature Of Our Queue**
 Our queue is Lock-Free because **we essentially "split" the shared data ownership.**
 
 **WAIT WHAT???**
@@ -182,7 +182,7 @@ In our SPSC scenario, we enforce a strict rule:
 
 But wait, don't we need a lock to read safely? You might be getting a vibe here: 'If the Reader is modifying R and the Writer tries to read R at the exact same moment, won't that cause a crash or garbage value?'
 
-This is a very normal concurrency doubt (even I got stuck this). In normal C++, reading and writing a variable simultaneously causes a Data Race. But here, we use Atomics (std::atomic).
+This is a very normal concurrency doubt (I also got conused here). In normal C++, reading and writing a variable simultaneously causes a Data Race. But here, we use Atomics (std::atomic).
 
 Because the hardware guarantees the update to atomic variables are atomic in nature (indivisible), The thread whihc will be reading will never see a garbage value.
 
