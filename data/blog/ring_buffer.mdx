@@ -153,7 +153,7 @@ Think about the Mutex scenario above: *both* threads were stuck (one sleeping, o
 
 In practice, we often use retry loops with atomic instructions (Fetch_and_Add, compare_and_exchange) for this. Here is a great video on Lock-Free and Wait-Free mechanisms which may help you: ([Lock-free vs. Wait-free](https://www.youtube.com/watch?v=USkke1-SZE8))
 
-### 9. How is our queue Lock-Free then? (The "Magic" of SPSC)
+### 9. How is our queue Lock-Free then? (The Benefits Of SPSC)
 
 Now, let's peel back the layers of the onion and connect everything.
 We established two things:
@@ -483,7 +483,7 @@ Following the implementation, I benchmarked this Lock-Free Queue against a stand
 
 #### The Data
 
-Below is the summary of average latencies across 10 million operations.
+Below is the summary of average latencies across 100 million operations.
 
 | Metric | Mutex Queue (ns) | Lock-Free Queue (ns) | Verdict |
 | --- | --- | --- | --- |
