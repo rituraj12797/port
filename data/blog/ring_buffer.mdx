@@ -151,7 +151,7 @@ Think about the Mutex scenario above: *both* threads were stuck (one sleeping, o
 * **Blocking:** "I cannot work until you are done."
 * **Lock-Free:** "I can work even if you are slow/asleep."
 
-In practice, we often use retry loops with atomic instructions (Fetch_and_Add, compare_and_exchange) for this. Here is a great video on Lock-Free and Wait-Free mechanisms which may help you: (Link to Nick's video).
+In practice, we often use retry loops with atomic instructions (Fetch_and_Add, compare_and_exchange) for this. Here is a great video on Lock-Free and Wait-Free mechanisms which may help you: ([Lock-free vs. Wait-free](https://www.youtube.com/watch?v=USkke1-SZE8))
 
 ### 9. How is our queue Lock-Free then? (The "Magic" of SPSC)
 
