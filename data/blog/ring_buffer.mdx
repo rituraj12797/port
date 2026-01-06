@@ -200,6 +200,8 @@ No contention. No locks. No heavy OS Context Switches blocking the other thread.
 We have achieved Lock-Free synchronization simply by respecting the ownership of these two variables.
 
 In fact, this design is technically **Wait-Free** (the strongest guarantee), because as long as the queue isn't full/empty, every operation completes in a constant number of steps.
+If we change the scenario to Multiple Producers (MPMC), our current code breaks immediately. If two writers try to increment next_index_to_write at the same time, they will overwrite each other's data (Data Race).
+To fix this without Mutexes, we have to use CAS (Compare-And-Swap) loops. This degrades the system from Wait-Free to Lock-Free.
 
 ### 10. Implementation
 
@@ -552,5 +554,5 @@ A system that is usually fast but occasionally freezes for 3 microseconds is dan
 
 ### 14. Extras 
 
-As always I conclude this blog with a fact that one of my friend told me about starving process - It is rumored that when the IBM 7094 mainframe at the Massachusetts Institute of Technology (MIT) was finally shut down in 1973, a very low-priority process was discovered that had been submitted in 1967 and had not yet been run to completion.
+As always I conclude this blog with a fact that one of my friend told me about starving processes - It is rumored that when the IBM 7094 mainframe at the Massachusetts Institute of Technology (MIT) was finally shut down in 1973, a very low-priority process was discovered that had been submitted in 1967 and had not yet been run to completion.
 
