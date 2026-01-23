@@ -1,0 +1,103 @@
+---
+title: "Approaching 50M Transactions/s"
+date: '2026-1-22'
+tags: ['C++', 'Low Level', 'Operating Systems']
+draft: false
+summary: "Optimising the lockfree queue using cache coherence and lazy pointers."
+---
+
+
+Hey there!!!, last time we discussed on the internals of how we implement the lock free queues using ring buffers, but the throughput did not justify the efforts we put in, in this blog I tried to dive deep into how I optmized the structure and tweaked the algorithms to improve the performance by 5 folds in read(pop) and write(push).
+
+The general way I try to explain the things is by first discusing what we need to do and why we need to do it, so beginning wih the why's of this.
+
+
+## Why To Optimize ? 
+
+
+The lock free queue we just built in the last part was a component needed in one of my projects whihc is supposed to be extremely efficient and work in low latency environments, to give you a example here i how the system looks form high level
+
+
+<!-- 
+                =========LFQ1=============== comp 5 ==============LFQ2========
+                ||                                                          ||
+                ||                                                          ||
+                ||                                                          ||
+                comp 1 ============LFQ3====== comp 2 =======LFQ4======= comp 3
+                ||   ||                         ||                      ||  ||
+                ||   ||                         ||                      ||  ||
+                ||  LFQ5                       LFQ6                   LFQ7  ||
+                ||   ||                         ||                      ||  ||
+                ||   ||                         ||                      ||  ||
+                ||   ||                         ||                      ||  ||
+                ||   ======================== comp 6 ====================   ||           
+                ||                                                          ||
+                ===========LFQ8============== comp 4 ============LFQ9=========
+        IMAGE
+ -->
+
+ IMAGE LIKE THIS ^^
+
+The system is closely coupled with each component pinned to different CPU core, these components/threads communicae to each other via this lock free queue.
+
+Notice how this system is using 9 of these lfqs and say if a data needs to travel from comp 4 --> comp 3 ---> comp 2 ---> comp 1 ----> comp 4 then it needs to go through 4 threads, and in total 4 lfq's now the total time for the data to just get inside these queues and then get popped out from them will be = (read_latency + write_latency)
+==> total time in ingestion + extraction of data from these queues in the whole cycles = 4*(read_latency + write_latency).
+
+if we compute this for our naive implementation this results in 4 * (77 + 83) ns = 640 nano seconds,
+
+means 640 ns i sjust the cost of data/messages to flow fro mthese channels (assuming that the components complete their work in 0ns), means when we add the overhead of processing of this data in those components we are doomed to force our latencies in the microsecond range.
+
+so inorder to minimize this overall latency we try to optimise what we have in our hands, i.e the lock free queues.
+
+
+## What To Optimize ? 
+
+If we look into the code of this data stcuture we can see that there are 2 things we can work on.
+
+1. The wrap around using modulo.
+2. The cache Invalidation and Bus traffic.
+
+
+<!--  more on this here as to why these re not very much efficient -->
+### The Wrap aroud logic.
+    To increment the indices and wrap them around the buffer we use the modulo operator, butthe modulo operator is extremely costly as it uses the division operstion and easily takes around 40 to 60 CPU cycles ( not accurate but indicative).
+
+    and that we use this  in both of you rread and write the latency multipies by 2 and some times by 3 too, due to this more time is spend in computation.
+
+### The cache Invalidation and Bus Trffic Problem, 
+    Explain this in much detail ==> from notes define what are the 2 problems here
+        1. they may be presrnt on same cache line ---> how this affects and what happens if we some how separate ethem, 
+        2. The false sharing problem and bus snooping and how on each step one process cancels the validity of other.
+    
+## How to Optimize
+
+    1. The wrap out logic and how we replace the modulo with the bitwise opertor and why this works.
+    2. Addressing the Bus traffic problem
+         How placing these on different cache lines helps usign alignas
+         How we address the false sharing problem and how it improves the latency 
+
+
+## Final Code
+
+```cpp
+code here
+```
+
+## Benchmark 
+
+
+
+
+## Learnings
+
+
+
+
+## A fun fact.
+
+
+
+
+
+
+
