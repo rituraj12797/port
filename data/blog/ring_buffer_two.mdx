@@ -72,23 +72,721 @@ If we look into the code of this data stcuture we can see that there are 2 thing
 ## How to Optimize
 
     1. The wrap out logic and how we replace the modulo with the bitwise opertor and why this works.
-    2. Addressing the Bus traffic problem
-         How placing these on different cache lines helps usign alignas
-         How we address the false sharing problem and how it improves the latency 
+
+    so we will first look into how are we going to optimize the wrap around logic ( if pointer points to last then net updte will mke it point to 0th index ) 
+    I will asume that you already know how a modulo operator works x mod y simply resuts into the remainder we will obtain after dividing x by y,
+    
+    So why is the modulo operator a problem ?? ==> well because it takes 30 to 40 CPU cycles on an avg ( Indicative purpose only exact numbers may vary ), we can optimise ti to a single CPU cycle.
+    damn!!! but how ?? the answer is very simple, using bitwise &(and) How ?? we will look through an example.
+
+    below is a table, just have a look at it.
+            
+    Index      (Index + 1)%size      (Index+1) & (7)
+    0               (1)%8 = 1           1 & 7 = 1
+    1               (2)%8 = 2           2 & 7 = 2
+    2               (3)%8 = 3           3 & 7 = 3
+    3               (4)%8 = 4           4 & 7 = 4
+    4               (5)%8 = 5           5 & 7 = 5 
+    5               (6)%8 = 6           6 & 7 = 6
+    6               (7)%8 = 7           7 & 7 = 7
+    7               (8)%8 = 0           8 & 7 = 0
+    8               (9)%8 = 1           9 & 7 = 1
+    9               (10)%8 = 2          10 & 7 = 2 
+    10              (11)%8 = 3          11 & 7 = 3
+    11              (12)%8 = 4          12 & 7 = 4
+    12              (13)%8 = 5          13 & 7 = 5
+    13              (14)%8 = 6          14 & 7 = 6
+    14              (15)%8 = 7          15 & 7 = 7
+
+    Sueprisingly the modulo based incrementor and & based incrementor are behaving the same way right ?, there is a logic behind this, 
+    a number of form 2^y - 1 has all of it's bits from the msb to the LSB set as 1 we will call this number as a mask, so it kind of acts as a limiter, you perform 
+    bitwise and of mask with any other number x and it will result in same numebr x.
+
+    and if you do bitwise and of it with any other number x whihc is > mask then when we do x &  mask all the bits of result will be 0 before the MSB of mask ( as those bits are set as 0 in the mask ), rest bits will stay as it is, 
+    so it kind of slashes the bits after MSB and the number results in wrpped form.
+
+    so effectivley what we can do is, we can set the size of our buffer equalto a power of 2 say we keep it as 2^20, so we define a mask = 2^20 - 1;
+
+    not incrementing index to index + 1 using modulo ( index ---> (index+1)%size ) is as same as (index ----> (index+1) & size). just the difference is that 
+    bitwise operations happen in single cpu cycle saving us tons of time.
+    
+
+
+    2. Addressing the Bus traffic Problem
+
+    Now to the main problem, this section incolved some conetps around Bus snooping, Cache Coherence and Mesi protocol and understanding of L1 L2 L3 caches structures, I would sggest you once go through this awesome lecture https://www.youtube.com/watch?v=83jOKVb_HTM
+    , also you should know about the structure of l1 cache inside the CPU how are the y stored and how memory is read from cache ( in form of lines and not individual variables). link : https://en.algorithmica.org/hpc/cpu-cache/cache-lines/
+    Okay we start now, let us have a look at our current code : 
+
+    ```cpp
+        class LFQueue final { // why final here ===> final is a keyword that emans no other class is going to inheit this class hence the compile devirtualizes it ==> performance gains 
+	    private :
+		std::vector<T> store_; 
+		std::atomic<size_t> next_index_to_read = {0};
+		std::atomic<size_t> next_index_to_write = {0};
+
+	    public : 
+		explicit LFQueue(std::size_t capacity ) : store_(capacity, T()){  // initialize size here 
+		// explicit used here to prevent any auto type conversion 
+			 // initialized the queue with a certain capacitiy
+			// empty body 
+		}
+
+		// delete extra constructors
+
+		LFQueue() = delete;
+		LFQueue(const LFQueue&) = delete;
+		LFQueue(const LFQueue&&) = delete;
+
+		LFQueue& operator = (const LFQueue&) = delete;
+		LFQueue& operator = (const LFQueue&&) = delete;
+
+		auto getNextWriteIndex() noexcept {
+			// we see is the queue is fulll then reruner thenull ptr 
+			// an Important lesson here 
+			return (((next_index_to_write + 1)%store_.size()) == next_index_to_read ? nullptr : &store_[next_index_to_write]);
+		}
+
+		auto updateWriteIndex() noexcept { // no contention here as our queue is SPSC ==> sngle producer single consumer ==> only one writer to only it will uipdate the write index 
+			internal_lib::ASSERT(((next_index_to_write + 1)%store_.size()) != next_index_to_read ," Queue full thread must wait before further writing");
+			next_index_to_write = (next_index_to_write + 1)%(store_.size());
+			// I know this is not a simple operation so it is not atomic but since we have a single writer no contention will happen here/
+		}
+
+		auto getNextReadIndex() noexcept {
+			// if the consumer consumed all the values and is now pointing to the next write index ==> means the place to which it is pointintg has no data yet so we return nullptr
+			return (next_index_to_read == next_index_to_write ? nullptr : &(store_[next_index_to_read]));
+		}
+
+		auto updateNextReadIndex() noexcept {
+			internal_lib::ASSERT(next_index_to_read != next_index_to_write," Nothing to consume by thread ");
+			next_index_to_read = (next_index_to_read + 1)%(store_.size());
+		}	
+
+
+	    };
+    ```
+    As you can see here, we have 2 atomic variables next_index_to_read and next_index_to_write these are the indices from where we should read the next value and to where we shoudl write the next value respectively,
+    , since they are atomic integers they take 8 bytes of memory, and L1 cache is generally of 64 Bytes, and since these 2 variable lie next to each other in memory, they most likely sit in the same cache line,
+
+    // a Disgram here to show hwo they lie on a Processor, 
+    -------------------------------------------------------------------------------------------------
+    |                                                                                               |
+    |                                                                                               |
+    | ------------------------------------------- L1 Cache line ----------------------------------- |
+    | -- next_index_to_read (8 Bytes) --------------- (next_index_to_write) (8 bytes) ------------- |
+    |                                                                                               |
+    -------------------------------------------------------------------------------------------------
+
+    Now notice that we have 4 functions  related ot these 2 variables 
+
+    getNextReadIndex() -> returns the next index to read from.
+    getNextWriteIndex() -> returns the next index to write to.
+    updateNextReadIndex() -> update the read index.
+    updateWriteIndex() -> update the write index.
+
+    now the way we use this LF queues is that, consider we have 2 threads ( producer and consumer ), the consumer thread is pinned on core 1 and the producer thread is pinned on core 2
+    so we define this Lock free queue in the main function and pass the read fucntion the consumer thread and the write access to the producer thread.  ( the Disruptor pattern ).
+
+    means core 1 (consumer) can access to getNextReadIndex and updateNextReadIndex and core 2 (producer) has access to getNextWriteIndex and updateWriteIndex 
+    , all of these function needs both of these atomic variables whenevr they execute.
+
+    means core 1 and core 2 stores both variables in their l1 cache as they are used every time the function is called (and this takes place very fast), so core 1 and core 2 look ssomething like 
+
+    core 1 : consumer
+    -------------------------------------------------------------------------------------------------
+    |                                                                                               |
+    |                                                                                               |
+    | ------------------------------------------- L1 Cache line ----------------------------------- |
+    | -- next_index_to_read (8 Bytes) --------------- (next_index_to_write) (8 bytes) ------------- |
+    | --------------------------------------------------------------------------------------------- |
+    -------------------------------------------------------------------------------------------------
+
+    core 2 : producer
+    -------------------------------------------------------------------------------------------------
+    |                                                                                               |
+    | --------------------------------------------------------------------------------------------- |
+    | ------------------------------------------- L1 Cache line ----------------------------------- |
+    | -- next_index_to_read (8 Bytes) --------------- (next_index_to_write) (8 bytes) ------------- |
+    |                                                                                               |
+    -------------------------------------------------------------------------------------------------
+
+    ( I would stronlgy suggest you to knwo about bus snoopingn as this part uses it's understanding extensively )
+    But Where is the problem ?? Here it is.
+
+
+    Some diagrams will help here.
+
+    Step 1 : when core 1  reads an entry from ring bufer, it the calls the updateNextReadIndex(), this will update the next_index_to_read, so it sends a Invalidate signal to all cores which use tihs variable, and screams " invalidate you r cache line which contains this variable" ( MESI protocol).
+    Step 2 : This invalidate signals is picked up by core 2 it see's it's 3rd line contains this variable, so it invalidates this whole cache line ( remember that next_index_to_write also lied on this line ), and onw since this whoel line is invalidate this variable's cache is also invalidated.
+    step 3 : core 1 now updates the value of next_index_to_read and now it snoops the CPU bus to look for any request of variables lying on it's 2nd L1 cache line.
+
+    Step 4 : Now say core 2 the producer needs to write something to this queue, it see's thet it's next_index_to_write is invaliated as it was lyign on the 3rd L1 cache lien which was invalidated by core 1,
+    Step 5 : It sends a read request in the bus to get the updated value of next_index_to_write.
+    step 6 : Core 1 which was snoping the bus, catches this request and sends the value of next_index_to_write to core 2, via Bus.
+
+    Now you migh be wondering that next_index_to_write wasn't modified so why was it invalidated ?? ==> simply because it was lying on same cache lines as that fo next_index_to_read, 
+
+    Step 7 : Now that core 2 has the correct next_index_to_write it writes to the queue and then calls updateWriteIndex(), which will update the next_index_to_write.
+    Step 8 : Core 2 Sees that the next_index_to_write lies onit's 3rd L1 cache line so it sends a invalidation signal to all the cores which screams " if you have next_index_to_write inany of your cache line then invaliate that line as i am modifying it"
+    Step 9 : Core 1 catches this signals and invalidates it's 2nd L1 cache line whihc contains next_index_to_write ( it also contains next_index_to_read ).
+    Step 10: Core 2 updates its copy of next_index_to_write and snoops the bus for any resusst fo variabels whch lies on it's updates cache line. 
+    Step 11 : Now say consumer again tries to consume from queue, it sees that it's next_index_to_read cache is invalidated, so it sends a read request on the bus.
+    Step 12 : Core 2 snoops this request and sends the next_index_to_read to core 1 ( it was invalidatd because it lies on same cache line as that of next_index_to_write).
+
+    and this goes back to Step 1 as a cycle continues.
+
+    Means when reader consumes ------> it invalidates writer's cache    =====> updateNextReadIndex invalidates cache
+    when writes want's the next_index_to_write it gets correct cache data through bus from reader. =====> getNextWriteIndex() gets correct cache data through bus. 
+    when writer writes soemting ------> it invalidates reader's cache.   ====> updateWriteIndex invalidates cache.
+    when reader want's the next_index_to_read it gets correct cache data through bus from writer. ========> getNextReadIndex() gets correct cache data through bus.
+
+    
+
+and the cycle continues 
+
+    So what is the core problem ====> writer is invalidating the next_index_to_read cache data    &    the reader is invalidating the next_index_to_write cache data.
+
+    Fix 1 : We define the atomic variables to be of 64 bytes so that they are guarunteed to lie on different cache lines, since the size of a L1 cache line is typically 64 bytes they will lie on differnt cache lines.
+
+    code : 
+    ```cpp
+        alignas(64) std::atomic<size_t> next_index_to_read = {0};
+		alignas(64) std::atomic<size_t> next_index_to_write = {0};
+    ```
+
+    this make ssure that the variables sit in L1 cache somethign like this : 
+    -------------------------------------------------------------------------------------------------
+    |                                                                                               |
+    |                                                                                               |
+    | ------------------------------------------- L1 Cache line ----------------------------------- |
+    | -------------- (next_index_to_read) (8 Bytes) ----------------------------------------------- |
+    | -------------- (next_index_to_write) (8 bytes)----------------------------------------------- |
+    -------------------------------------------------------------------------------------------------
+
+    How will this help ??
+
+    Now, let's replay our scenario:
+
+    Step 1: Core 1 (Consumer) reads a value and calls updateNextReadIndex(). It modifies next_index_to_read.
+
+    The Change: It sends an invalidation signal ONLY for Cache Line X.
+    The Result: Core 2 (Producer) sees the signal. It checks its cache. "Do I have Line X? Yes. Okay, invalidating Line X."
+    The Magic: Core 2's Line Y (which holds next_index_to_write) remains VALID. It is untouched!
+
+    Step 2: Core 2 (Producer) wants to write data. It calls getNextWriteIndex().
+    The Change: It reads next_index_to_write from Line Y.
+    The Result: Since Line Y was never invalidated, this is a L1 Cache Hit. It takes ~1 nanosecond. Instant. No bus snooping required for this variable.
+
+    Step 3: Core 2 writes data and calls updateWriteIndex(). It modifies next_index_to_write.
+    The Change: It invalidates Line Y.
+    The Result: Core 1 invalidates its copy of Line Y. But Core 1's Line X (holding next_index_to_read) stays valid.
+
+    Step 4: Core 1 calls getNextReadIndex().
+    The Change: It reads next_index_to_read from Line X.
+
+    The Result: L1 Cache Hit.
+    By simply adding alignas(64), we completely stopped the Producer and Consumer from stepping on each other's toes when they are just minding their own business (updating their own indices). This eliminates "False Sharing" and gives us a nice performance bump.
+
+    But... We Are Not Done Yet (The "True Sharing" Problem)
+    You might think, "Great! Zero bus traffic!" Unfortunately, no. We still have a massive problem.
+
+    Look at the code for updateWriteIndex() again:
+
+    ```cpp
+
+        auto updateWriteIndex() noexcept {
+            // WAIT! We are reading 'next_index_to_read' here!
+            internal_lib::ASSERT(((next_index_to_write + 1) % size) != next_index_to_read, "Queue full");
+    
+            next_index_to_write = (next_index_to_write + 1) % size;
+        }
+    ```
+
+    Do you see it? To check if the queue is full, the Producer (Core 2) has to read next_index_to_read. But who owns next_index_to_read's valid cache? The Consumer (Core 1).
+    So, even though we separated the lines:
+
+        Consumer updates read_index (Invalidates Core 2's copy of Line X).
+        Producer wants to check "Is Queue Full?".
+        Producer tries to read read_index. CACHE MISS.
+        Producer has to snoop the bus and drag the value all the way from Core 1.
+        This is called True Sharing. We actually need the value from the other core. This "Ping-Pong" of the cache line across the bus takes ~20-40 nanoseconds.
+
+    means the update function still causes bus trafic by the "Ping Pong" effect.
+
+    how to fix this ?? 
+
+Fix 2: The "Lazy Pointer" (Shadow Indices)
+Okay, so we fixed the False Sharing using alignas(64). But we still have a "Traffic" problem. To understand why, we need to look at the geometry of a Ring Buffer.
+
+The Problem: Being "Too" Up-To-Date
+
+Imagine the Producer (Writer) is at index W and the Consumer (Reader) is at index R. The Producer's #1 rule is: "Do not write if the queue is full." Mathematically, "Full" means: (W + 1)%mod == R.
+
+In our naive code, the Producer asks the Consumer: "Hey, where are you exactly?" (read_index.load()) before every single write.
+
+Write 1: "Where are you?" -> "I'm at 50." -> "Okay, I write to 1."
+
+Write 2: "Where are you?" -> "I'm at 50." -> "Okay, I write to 2."
+
+Write 3: "Where are you?" -> "I'm at 51." -> "Okay, I write to 3."
+
+Every time the Producer asks "Where are you?", it forces a bus transaction if the Consumer has updated the index. This is expensive. We don't need to know exactly where the Reader is. We just need to know if it is here ( where we are going to write ) or not.
+
+The Logic: The "Safe Zone"
+
+We know that the Reader can never "jump" past the Writer. It can only chase it. This creates two scenarios for free space:
+
+Scenario A: Writer is behind Reader
+
+Plaintext
+
+Indices:  0       W              R           Last
+Buffer:   [ Used ][ FREE SPACE! ][   Used   ]
+Here, the Writer is at W. The Reader is at R.
+
+We know for a fact that indices W to R-1 are Empty.
+
+We can safely write into this "Safe Zone" without checking on the Reader again!
+
+Scenario B: Reader is behind Writer (Wrap Around)
+
+Plaintext
+
+Indices:  0       R              W           Last
+Buffer:   [ FREE ][    Used     ][ FREE SPACE ]
+Here, the Writer has wrapped around.
+
+We know that W to Last is free, AND 0 to R-1 is free.
+
+Again, we have a massive chunk of space we can fill blindly.
+
+The Solution: Shadow Indexing
+
+The Producer maintains a local variable: cached_read_index. This is a "snapshot" of where the Reader was last time we checked.
+
+Logic: As long as my next_write isn't bumping into my cached_read_index, I don't care where the real Reader is. I assume the queue is safe.
+
+Benefit: I only pay the "Bus Traffic Tax" when I think I'm full.
+
+
+
+Let's say we have a Queue of Size 8.
+
+Real Reader (R) is actually at index 5.
+
+Writer (W) is at index 0.
+
+Writer's Cached Read (CR) starts at 0 (Initialized state).
+
+Step-by-Step Execution:
+
+Writer wants to write to Index 0.
+
+It calculates next_write = 1.
+
+It checks its local memory: next_write (1) == CR (0)? No.
+
+Wait! Actually, let's look at the "Full" check. (0 + 1) == 0? No.
+
+But initially, CR is 0. So Writer thinks: "Uh oh, (W+1) might hit CR. I better check the real Reader."
+
+BUS SNOOP: Writer fetches Real R. It gets 5.
+
+Writer updates CR = 5.
+
+Writer writes to Index 0.
+
+Writer wants to write to Index 1.
+
+next_write = 2.
+
+Does 2 == CR (5)? No.
+
+Action: Write immediately! (Zero Bus Traffic).
+
+Writer wants to write to Index 2.
+
+next_write = 3.
+
+Does 3 == CR (5)? No.
+
+Action: Write immediately! (Zero Bus Traffic).
+
+Writer wants to write to Index 3.
+
+next_write = 4.
+
+Does 4 == CR (5)? No.
+
+Action: Write immediately! (Zero Bus Traffic).
+
+Writer wants to write to Index 4.
+
+next_write = 5.
+
+Does 5 == CR (5)? YES!
+
+Writer thinks: "Shoot, I think I'm full. My old data says the Reader is at 5. But maybe he moved?"
+
+BUS SNOOP: Writer fetches Real R.
+
+Scenario A: If Real R is still 5, the queue is truly full. Writer waits.
+
+Scenario B: If Real R has moved to 7, Writer updates CR = 7 and continues writing.
+
+The Result: Instead of checking the bus 5 times (for indices 0, 1, 2, 3, 4), we checked it once (at index 0) and then did 4 writes for "free".
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// An Image here ......................  
+
+Just like the Writer doesn't need to check for space constantly, the Reader doesn't need to check for data constantly.
+
+The Logic: The "Data Zone"
+
+The Reader is at index R. The Writer is at index W. The Reader's #1 rule is: "Do not read if the queue is empty." Mathematically, "Empty" means: R == W.
+
+In the naive implementation, the Reader asks the Writer: "Did you write anything new?" (write_index.load()) before every single read. This is wasteful. If the Writer dropped 100 items into the queue, why ask "Is there data?" 100 times? You should ask once, see 100 items, and consume them all in one go.
+
+The Solution: Shadow Indexing (Reader Edition)
+
+The Consumer maintains a local variable: cached_write_index. This is a snapshot of where the Writer was last time we checked.
+
+Logic: As long as my read_index hasn't caught up to my cached_write_index, I know for a fact there is valid data waiting for me.
+
+Benefit: I only pay the "Bus Traffic Tax" when I think I've run out of data.
+
+The Logic: The "Data Zone"
+
+This creates a "Data Zone"—a stretch of the buffer that we know contains valid messages, safe to consume without asking permission.
+
+Scenario A: Reader is Chasing Writer
+
+Plaintext
+
+Indices:  0       R              W           Last
+Buffer:   [ Used ][  DATA ZONE!  ][ Free Space ]
+Here, the Reader is at R. The Writer is at W.
+
+We know that indices R to W-1 contain valid data.
+
+We can process everything in the Data Zone blindly.
+
+Scenario B: Writer Wrapped Around
+
+Plaintext
+
+Indices:  0       W              R           Last
+Buffer:   [ DATA ][ Free Space  ][ DATA ZONE! ]
+Here, the Writer has wrapped around.
+
+We know that R to Last is valid data, and 0 to W-1 is also valid data.
+
+We have two massive chunks of data to chew through before we need to check the atomic variable again.
+
+The Example (Reader Edition)
+
+Let's stick to our Queue of Size 8.
+
+Real Writer (W) has filled the buffer and is at index 5.
+
+Reader (R) is at index 0.
+
+Reader's Cached Write (CW) starts at 0 (Initialized state).
+
+Step-by-Step Execution:
+
+Reader wants to read Index 0.
+
+It checks its local memory: R (0) == CW (0)? YES.
+
+Reader thinks: "My old data says the queue is empty. But maybe the Writer has been busy?"
+
+BUS SNOOP: Reader fetches Real W. It gets 5.
+
+Reader updates CW = 5.
+
+Now, R (0) != CW (5). Data exists!
+
+Reader reads Index 0. (1 Bus Snoop)
+
+Reader wants to read Index 1.
+
+R is 1.
+
+Does R (1) == CW (5)? No.
+
+Reader thinks: "I know the Writer went at least up to 5. So index 1 definitely has data."
+
+Action: Read immediately! (Zero Bus Traffic).
+
+Reader wants to read Index 2.
+
+R is 2.
+
+Does 2 == CW (5)? No.
+
+Action: Read immediately! (Zero Bus Traffic).
+
+Reader wants to read Index 3.
+
+R is 3.
+
+Does 3 == CW (5)? No.
+
+Action: Read immediately! (Zero Bus Traffic).
+
+Reader wants to read Index 4.
+
+R is 4.
+
+Does 4 == CW (5)? No.
+
+Action: Read immediately! (Zero Bus Traffic).
+
+Reader wants to read Index 5.
+
+R is 5.
+
+Does 5 == CW (5)? YES!
+
+Reader thinks: "I've caught up to where I thought the Writer was. Is there more?"
+
+BUS SNOOP: Reader fetches Real W.
+
+Scenario A: If Real W is still 5, the queue is truly empty. Reader waits.
+
+Scenario B: If Real W has moved to 8, Reader updates CW = 8 and continues reading.
+
+The Result:
+
+Instead of checking the bus 5 times (for indices 0, 1, 2, 3, 4), we checked it once (at index 0) and then did 4 reads for "free".
+
+
+
+
+This lazy pointer optimization reduces the Bux traffic by hundreds folds. so we keep 2 shadow indices 
+
+The read shadow index lies inside producer to keep track f last positon of consumer 
+ad similarly the lazy write shadow index  lies inside the consumer to keep track of last positon od producer.
+
+
+
+In the naive implementation, every single push() or pop() operation generated a bus transaction to check the other thread's index. This is like calling your friend every second to ask, "Are you there yet?"
+
+The Math of Reduction:
+
+Before: 1 Operation = 1 Bus Check.
+
+Traffic Load: 100% (1:1 ratio).
+
+After: 1 Bus Check allows for Capacity - 1 operations in the best case.
+
+If your Ring Buffer size is 1024:
+
+You check the bus 1 time.
+
+You perform 1023 operations in silence (pure L1 cache hits).
+
+Traffic Load: ~0.1% (1:1024 ratio).
+
+The Result: We have effectively reduced the coherence traffic on the CPU Ring Bus by 99.9%.
+
+By silencing the constant chatter between cores, we freed up the bandwidth for what actually matters: moving the data itself.
+
+
+New benchmarks 
+
+rituraj12797@bellw3thers-pc:~/Capitol_resources/getting_started_with_writing_cli_in_C++/lockFreeQueue/build$ ./lockfreequeue 
+ Main Thread Executing 
+Thread [ std writer ] pinned to Core 3
+Thread [ std reader ] pinned to Core 4
+ ========================================= BENCHMARK PERFORMANCE FOR  std::queue + mutex ================================ 
+
+
+ WRITE LATENCIES 
+ P50 : 82
+ P90 : 485
+ P99 : 1436
+ P99.9 : 5106
+ P99.99 : 11909
+ P99.999 : 23868
+ READ LATENCIES 
+ P50 : 54
+ P90 : 468
+ P99 : 1533
+ P99.9 : 5023
+
+ P99.99 : 13156
+ P99.999 : 35241
+
+========================================================================================================
+
+
+Thread [ writer to lq_queue ] pinned to Core 6
+Thread [ writer to lq_queue ] pinned to Core 5
+ ========================================= BENCHMARK PERFORMANCE FOR  LF_queue ================================ 
+
+
+ WRITE LATENCIES 
+ P50 : 17
+ P90 : 21
+ P99 : 24
+ P99.9 : 42
+ P99.99 : 287
+ P99.999 : 6031
+ READ LATENCIES 
+ P50 : 16
+ P90 : 17
+ P99 : 18
+ P99.9 : 28
+
+ P99.99 : 208
+ P99.999 : 501
+
+========================================================================================================
+
+
+
+
+    
+
+
+
 
 
 ## Final Code
 
 ```cpp
-code here
+
+#pragma once 
+
+// why this '#pragma once' was needed ==> so that even if in multiple files when we inlcude thi sheader the c++ should nto import multiple compies of it to give an error of redeclarations
+#include<iostream>
+#include<vector>
+#include<atomic>
+#include<thread>
+// #include "internal_lib.h"
+#include "imp_macros.h"
+
+
+
+namespace internal_lib {
+	template<typename T>
+
+
+	class LFQueue final { // why final here ===> final is a keyword that emans no other class is going to inheit this class hence the compile devirtualizes it ==> performance gains 
+	private :
+
+		// std::atomic<size_t> next_index_to_read = {0};   
+		// std::atomic<size_t> next_index_to_write = {0};
+
+		alignas(64) std::atomic<size_t> next_index_to_read = {0};   
+		alignas(64) size_t lazy_write = {0};
+
+		std::vector<T> store_; 
+
+		alignas(64) std::atomic<size_t> next_index_to_write = {0};
+		alignas(64) size_t lazy_read = {0};
+		
+
+	public : 
+		size_t buffer_size = 2;
+		size_t capacity_mask = buffer_size - 1; // the mask we will use to wrap
+
+		explicit LFQueue(std::size_t capacity ){  
+
+			size_t target_size = capacity;
+    		if(target_size < 50 * capacity) target_size = 50 * capacity; //  multiplier logic
+
+    		buffer_size = 2;
+
+    		while(buffer_size < target_size) {
+        		buffer_size *= 2;
+    		}
+
+    		capacity_mask = buffer_size - 1;
+
+    		store_.resize(buffer_size);
+		}
+
+		// delete extra constructors
+
+		LFQueue() = delete;
+		LFQueue(const LFQueue&) = delete;
+		LFQueue(const LFQueue&&) = delete;
+
+		LFQueue& operator = (const LFQueue&) = delete;
+		LFQueue& operator = (const LFQueue&&) = delete;
+		T* getNextWriteIndex() noexcept {
+			// we see is the queue is fulll then reruner thenull ptr 
+			// an Important lesson here 
+
+			if((next_index_to_write + 1)&(capacity_mask) == lazy_read) { // we arrived where last time read was found 
+				// now found where exactlky is this read 
+				if((next_index_to_write + 1)&(capacity_mask) == next_index_to_read) {
+					return nullptr;
+				}
+				lazy_read = next_index_to_read;
+			}
+
+			return &(store_[next_index_to_write]);
+		}
+
+		auto updateWriteIndex() noexcept { // no contention here as our queue is SPSC ==> sngle producer single consumer ==> only one writer to only it will uipdate the write index 
+
+			if( ((next_index_to_write + 1)&( capacity_mask)) == lazy_read) {
+				lazy_read = next_index_to_read;
+				internal_lib::ASSERT( ((next_index_to_write + 1)&( capacity_mask)) != lazy_read ," Queue full thread must wait before further writing");
+			}
+
+			next_index_to_write = ((next_index_to_write + 1)&( capacity_mask));
+		}
+
+		T* getNextReadIndex() noexcept {
+			// if the consumer consumed all the values and is now pointing to the next write index ==> means the place to which it is pointintg has no data yet so we return nullptr
+
+			if(next_index_to_read == lazy_write) {
+				if(next_index_to_read == next_index_to_write) {
+					return nullptr;
+				}
+				lazy_write = next_index_to_write;
+			}
+
+			return &(store_[next_index_to_read]);
+		}
+
+		auto updateNextReadIndex() noexcept {
+
+			if(next_index_to_read == lazy_write) {
+				lazy_write = next_index_to_write;
+				internal_lib::ASSERT(next_index_to_read != lazy_write," Nothing to consume by thread ");
+			}
+
+			next_index_to_read = ((next_index_to_read + 1)&( capacity_mask));
+		}	
+
+
+	};
+};
+
+
+*/
+
 ```
-
-## Benchmark 
-
-
-
-
-## Learnings
 
 
 
