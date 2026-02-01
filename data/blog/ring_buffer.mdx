@@ -184,7 +184,7 @@ But wait, don't we need a lock to read safely? You might be getting a vibe here:
 
 This is a very normal concurrency doubt (I also got conused here). In normal C++, reading and writing a variable simultaneously causes a Data Race. But here, we use Atomics (std::atomic).
 
-Because the hardware guarantees the update to atomic variables are atomic in nature (indivisible), The thread whihc will be reading will never see a garbage value.
+Because the hardware guarantees the update to atomic variables are atomic in nature (indivisible), The thread which will be reading will never see a garbage value.
 
 **Why this makes it Lock-Free:**
 Since the Writer is the *only* thread in the entire universe that updates `W`, it will **never** collide with anyone else trying to update `W`. It doesn't need to lock `W` because it owns it!
