@@ -74,7 +74,7 @@ Below is a table, just have a look at it:
 
 Surprisingly, the modulo-based incrementor and `&` based incrementor are behaving the same way, right? There is logic behind this. 
 
-A number of the form `2^y - 1` has all of its bits from the MSB to the LSB set as 1. We will call this number a **mask**. So it kind of acts as a limiter. You perform bitwise AND of the mask with any other number `x`, and (if x <= mask) it will result in the same number `x`.
+A number of the form `2^y - 1` has all of its bits from the MSB to the LSB set as 1. We will call this number a **mask**. So it kind of acts as a limiter. You perform bitwise AND of the mask with any other number `x`, and (if x \<= mask) it will result in the same number `x`.
 
 But if you do a bitwise AND with a number `x` which is `> mask`, then when we do `x & mask`, all the bits of the result will be 0 before the MSB of the mask (as those bits are set as 0 in the mask), and the rest of the bits will stay as they are. So it effectively slashes the bits after MSB and the number results in the wrapped form.
 
