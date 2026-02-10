@@ -15,9 +15,9 @@ The lock-free queue we just built in the last part was a component needed in one
 
 ![High Level View Of System](/static/images/lock_free_two/High_Level_View_Of_System.png)
 
-TThe system is closely coupled, with each component pinned to a different CPU core. These components/threads communicate with each other via this lock-free queue.
+The system is closely coupled, with each component pinned to a different CPU core. These components/threads communicate with each other via this lock-free queue.
 
-Notice how this system is using 12 of these LFQs ( Green One's represent bi directional lock free queues which are implemented by using 2 unidirectional ones' internally)? Say if data needs to travel from Comp 6 --> Comp 3 ---> Comp 2 ---> Comp 1 ----> Comp 6; it needs to go through 4 threads, and in total 4 LFQs. Now, the total time for the data to just get inside these queues and then get popped out from them will be = `(read_latency + write_latency)`.
+Notice how this system is using 12 of these LFQs ( Green Ones represent bi directional lock free queues which are implemented by using 2 unidirectional ones' internally)? Say if data needs to travel from Comp 6 --> Comp 3 ---> Comp 2 ---> Comp 1 ----> Comp 6; it needs to go through 4 threads, and in total 4 LFQs. Now, the total time for the data to just get inside these queues and then get popped out from them will be = `(read_latency + write_latency)`.
 
 Total time in ingestion + extraction of data from these queues in the whole cycle = `4 * (read_latency + write_latency)`.
 
@@ -35,17 +35,17 @@ If we look into the code of this data structure, we can see that there are 2 thi
 ### The Wrap-Around Logic
 To increment the indices and wrap them around the buffer, we use the modulo operator. But the modulo operator is extremely costly as it uses the division operation and easily takes around 40 to 60 CPU cycles (not accurate but indicative).
 
-Since we use this in both likely your read and write, the latency multiplies by 2, and sometimes by 3, simply due to the time spent on computation.
+Since we use this in both read and write, the latency multiplies by 2, and sometimes by 3, simply due to the time spent on computation.
 
 ### The Cache Invalidation and Bus Traffic Problem
 This is the big one. There are two main issues here:
 1. **False Sharing:** The variables may be present on the same cache line.
-2. **Ping Pong Effect:** The bus snooping problem, and how at each step, one process cancels the validity of the other.
+2. **Ping Pong Effect:** The bus snooping problem arises regarding how at each step one core cancels the cache validity of the other.
 
 
 ## How to Optimize
 
-### 1. The Wrap-Around Logic (Replacng Modulo)
+### 1. The Wrap-Around Logic (Replacing Modulo Operation)
 
 So, we will first look into how we are going to optimize the wrap-around logic (if the pointer points to the last index, the net update will make it point to the 0th index). 
 
@@ -162,7 +162,7 @@ However, all of these functions need **both** of these atomic variables whenever
 
 ![IMAGE_S1](/static/images/lock_free_two/IMAGE_S1.png)
 
-**Step 2:** This invalidate signal is picked up by Core 2. It sees its 2nd L1 line contains this variable, so it invalidates this **whole** cache line. Remember that `next_index_to_write` also lied on this line! So because the *line* is invalid, that variable's cache is also invalidated.
+**Step 2:** This invalidate signal is picked up by Core 2. It sees its 2nd L1 line contains this variable, so it invalidates this **whole** cache line. Remember that `next_index_to_write` also lay on this line! So because the *line* is invalid, that variable's cache is also invalidated.
 
 ![IMAGE_S2](/static/images/lock_free_two/IMAGE_S2.png)
 
@@ -278,7 +278,7 @@ How will this help?
         Producer has to snoop the bus and drag the value all the way from Core 1.
         This is called True Sharing. We actually need the value from the other core. This "Ping-Pong" of the cache line across the bus takes ~20-40 nanoseconds.
 
-    means the update function still causes bus trafic by the "Ping Pong" effect.
+    means the update function still causes bus traffic by the "Ping Pong" effect.
 
     Well... How do we fix this?? This was a difficult thing to find on the internet, but somehow I luckily ended up on an awesome article by The Bearded Sage titled "True Sharing, False Sharing and Ping-Ponging" (It's http and not https, so visit at your own risk). Also, there are some [Slides](https://csg.csail.mit.edu/6.5900/Lectures/L12handout.pdf) on it from the famous Lecture I linked above 
 
@@ -441,13 +441,13 @@ P99.999 : 501
 
 ```
 
-We Increased our write through by 5x in push (9M/seconds -> 55M/seconds) and pop(8 M/seconds -> 40M/seconds) our optimized LF_queue isn't just "faster"—it’s essentially playing a different sport while the standard mutex + std::queue approach spends most of its time in locking, unlocking, our implementation achieves a consistent throughput of ~55M reads/second and ~40M Writes/S for 99% of the time.
+We Increased our write throughput by 5x in push (9M/seconds -> 55M/seconds) and pop(8 M/seconds -> 40M/seconds) our optimized LF_queue isn't just "faster"—it’s essentially playing a different sport while the standard mutex + std::queue approach spends most of its time in locking, unlocking, our implementation achieves a consistent throughput of ~55M reads/second and ~40M Writes/S for 99% of the time.
 
 One more thing, we drastically reduced the Jitter/latency Spread (p50--->p99) from 50ns(earlier) to ~6-8 ns now, why this matter ??.
 
 Because in low latency environments, a high average speed is useless if you have "jitter" (those huge P99 spikes). It's like having a code that runs fast but randomly slows down in between. By dropping the jitter using lazy pointers and cache alignment, we ensure that the system doesn’t randomly decide to take a nap while a critical packet is waiting.
 
-But There's Is one Major Win Which The benchmark Does Not Show.
+But There Is one Major Win Which The benchmark Does Not Show.
 
 It is the sheer amount of screaming we stopped on the CPU Bus, mathematically speaking, let's look at what we actually achieved. Suppose we have a buffer with a capacity of 1,000,000 entries. Let's say the Reader is slightly slow (or stopped), and the Writer manages to push 10,000 items before it finally bumps into its cached_read index.
 
@@ -479,7 +479,7 @@ a bit of bit-shuffling and some "lazy" logic, but when being lazy results in sav
 
 ## Final Code
 
-Before you assume I code using AI let me make it clear, I make a lot of mis-spells so for that obvious reason I have used Agentic-AI to write gramatically correct comments(only) for me, code is purely written by me.
+Before you assume I code using AI let me make it clear, I make a lot of typos so for that obvious reason I have used Agentic-AI to write gramatically correct comments(only) for me, code is purely written by me.
 
 ```cpp
 #include<iostream>
@@ -578,7 +578,7 @@ namespace internal_lib {
 
 ## A fun fact.
 
-You CPU is a very Smart Gambler(Like Hakari from JJK.) when it comes to predicting outcomes of branch instructions thanks to it's Hardware Branch Pridicting Unit.
+You CPU is a very Smart Gambler(Like Hakari from JJK.) when it comes to predicting outcomes of branch instructions thanks to it's Hardware Branch Predicting Unit.
 
 
 
