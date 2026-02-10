@@ -1,12 +1,12 @@
 ---
-title: "Approaching 50Million Transaction/S"
+title: "Surpassing 50 Million Transaction/S : A Deep Dive into Cache Coherence"
 date: '2026-2-2'
 tags: ['C++', 'Low Level', 'Operating Systems']
 draft: false
 summary: "How I Scaled From 8M Transactions/S to 55M Transaction/S, optimising the lockfree queue using cache coherence and lazy pointers."
 ---
 
-Hey there!!! Last time we discussed the internals of how we implement lock-free queues using ring buffers, but the throughput did not justify the efforts we put in. In this blog, I tried to dive deep into how I optimized the structure and tweaked the algorithms to improve the performance by 5-fold in read (pop) and write (push).
+Hey there!!! In the last blog [Lock Free Queues In C++](https://bellw3ther.tech/blog/ring_buffer) we discussed the internals of how we implement lock-free queues using ring buffers, but the throughput did not justify the efforts we put in. In this blog, I tried to dive deep into how I optimized the structure and tweaked the algorithms to improve the performance by 5-fold in read (pop) and write (push).
 The general way I try to explain things is by first discussing *what* we need to do and *why* we need to do it. So, beginning with the **why's** of this.
 
 ## Why Optimize? 
