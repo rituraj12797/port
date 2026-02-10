@@ -338,32 +338,44 @@ Let's say we have a Queue of Size 12.
 
 Real Reader (R) is actually at index 5.
 Writer (W) is at index 0.
-Writer's Cached Read (CR) starts at 0 (Initialized state).
+Writer's Cached Read (CR) starts at 1 (Initialized state so as to keep the 0th index as sacrificial slot at start).
+
 Step-by-Step Execution:
 
-Writer wants to write to Index 0.
-It calculates next_write = 1.
-It checks its local memory: next_write (1) == CR (0)? No.
-Wait! Actually, let's look at the "Full" check. (0 + 1) == 0? No.
-But initially, CR is 0. So Writer thinks: "Uh oh, (W+1) might hit CR. I better check the real Reader."
-BUS SNOOP: Writer fetches Real R. It gets 5.
-Writer updates CR = 5.
+1. Writer wants to write to Index 0.
+
+2. It calculates W position = 0.
+
+3. Let's look at the "Full" check. (W(0) + 1) == CR(1)? Yes, means that according to the last(initial) read position the 0th index would be the sacrificial slot.
+
+4. Rule Of Thumb : a request will be transmitted into the CPU bus to get the current positon of **read** index, whenever (W + 1)%size = (CR).
+
+5. Initially, CR is 1. So Writer thinks: "Uh oh, (W+1) might hit CR. I better check the real Reader."
+
+6. BUS SNOOP: Writer fetches Real R. It gets 5.
+
+7. Writer updates CR = 5.
 
 ![IMAGE_7](/static/images/lock_free_two/IMAGE_7.png)
 
 
 Writer writes to Index 0.
-Writer wants to write to Index 1. next_write = 2. Does 2 == CR (5)? No.  →  Action: Write immediately! (Zero Bus Traffic).
-Writer wants to write to Index 2. next_write = 3. Does 3 == CR (5)? No.  →  Action: Write immediately! (Zero Bus Traffic).
-Writer wants to write to Index 3. next_write = 4. Does 4 == CR (5)? No.  →  Action: Write immediately! (Zero Bus Traffic).
-Writer wants to write to Index 4. next_write = 5. Does 5 == CR (5)? YES!
-Writer thinks: "Shoot, I think I'm full. My old data says the Reader is at 5. But maybe he moved?"
+
+1. Writer wants to write to Index 1. next_write = 2. Does 2 == CR (5)? No.  →  Action: Write immediately! (Zero Bus Traffic).
+
+2. Writer wants to write to Index 2. next_write = 3. Does 3 == CR (5)? No.  →  Action: Write immediately! (Zero Bus Traffic).
+
+3. Writer wants to write to Index 3. next_write = 4. Does 4 == CR (5)? No.  →  Action: Write immediately! (Zero Bus Traffic).
+
+4. Writer wants to write to Index 4. next_write = 5. Does 5 == CR (5)? YES!
+
+5. Writer thinks: "Shoot, I think I'm full. My old data says the Reader is at 5. But maybe he moved?"
 
 BUS SNOOP: Writer fetches Real R.
 
 ![IMAGE_8](/static/images/lock_free_two/IMAGE_8.png)
 
-Scenario A: If Real R is still 5, the queue is truly full. Writer waits.
+**Scenario A**: If Real R is still 5, the queue is truly full. Writer waits.
 
 
 
@@ -371,14 +383,10 @@ Scenario A: If Real R is still 5, the queue is truly full. Writer waits.
 
 ![IMAGE_10](/static/images/lock_free_two/IMAGE_10.png)
 
-Scenario B: If Real R has moved to 7, Writer updates CR = 7 and continues writing now say R increments further and goes at 9, CR remains at 7 and we get free writes untill W points to 7.
+**Scenario B**: If Real R has moved to 7, Writer updates CR = 7 and continues writing now say R increments further and goes at 9, CR remains at 7 and we get free writes untill W points to 7.
 
 
-
-
-The Result: Instead of checking the bus 5 times (for indices 0, 1, 2, 3, 4), we checked it once (at index 0) and then did 4 writes for "free".
-
-
+**The Result**: Instead of checking the bus 5 times (for indices 0, 1, 2, 3, 4), we checked it once (at index 0) and then did 4 writes for "free".
 
 
 Just like the Writer doesn't need to check for space constantly, the Reader doesn't need to check for data constantly.
@@ -399,21 +407,22 @@ This lazy pointer optimization reduces the Bus traffic essentially a hundredfold
 
 The read shadow index lies inside the Producer to keep track of the last known position of the Consumer.
 Similarly, the lazy write shadow index lies inside the Consumer to keep track of the last known position of the Producer.
+
 The Math of Reduction
-Before: 1 Operation = 1 Bus Check. Traffic Load: 100%.
-After: 1 Bus Check allows for Capacity - 1 operations in the best case.
-If your Ring Buffer size is 1024:
 
-You check the bus 1 time.
-You perform 1023 operations in silence (pure L1 cache hits).
-Traffic Load: ~0.1%.
-The Result: We have effectively reduced the coherence traffic on the CPU Ring Bus by 99.9%. By silencing the constant chatter between cores, we freed up the bandwidth for what actually matters: moving the data itself.
+**Before**: 1 Operation = 1 Bus Check. Traffic Load: 100%.
 
+**After**: 1 Bus Check allows for Capacity - 1 operations in the best case.
 
+If your Ring Buffer size is 1024, you check the bus 1 time and You perform 1023 operations in silence (pure L1 cache hits), reducing traffic load to **~0.1%**.
+
+**The Result**: We have effectively reduced the coherence traffic on the CPU Ring Bus by 99.9%. By silencing the constant chatter between cores, we freed up the bandwidth for what actually matters: moving the data itself.
 
 
 
-New benchmarks 
+
+
+## Benchmarks 
 
 ``` shell
 
@@ -450,6 +459,7 @@ P99 : 18
 P99.999 : 501
 
 ```
+## Insights
 
 We Increased our write throughput by 5x in push (9M/seconds  →  55M/seconds) and pop(8 M/seconds  →  40M/seconds) our optimized LF_queue isn't just "faster" it’s essentially playing a different sport while the standard mutex + std::queue approach spends most of its time in locking, unlocking, our implementation achieves a consistent throughput of ~55M reads/second and ~40M Writes/S for 99% of the time.
 
@@ -477,11 +487,6 @@ Percentage Reduction = ((10,000 - 1) / 10,000) * 100
 We reduced the noise by **99.99%**.
 
 It took a bit of bit-shuffling and some "lazy" logic, but when being lazy results in saving 10,000 trips across the CPU bus, I’m happy to call it an architectural masterpiece.
-
-
-    
-
-
 
 
 
@@ -586,7 +591,7 @@ namespace internal_lib {
 
 ## A fun fact.
 
-You CPU is a very Smart Gambler(Like Hakari from JJK.) when it comes to predicting outcomes of branch instructions thanks to it's Hardware Branch Predicting Unit.
+As always here's a interesting fact....Your CPU is a very smart gambler(Like Hakari from JJK.) when it comes to predicting outcomes of branch instructions thanks to it's Hardware Branch Predicting Unit.
 
 
 
