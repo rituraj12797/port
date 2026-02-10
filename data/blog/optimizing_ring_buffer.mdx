@@ -39,7 +39,8 @@ To increment the indices and wrap them around the buffer, we use the modulo oper
 
 Since we use this in both read and write, the latency multiplies by 2, and sometimes by 3, simply due to the time spent on computation.
 
-### The Cache Invalidation and Bus Traffic Problem
+### The Cache Invalidation and Bus Traffic Problem.
+
 This is the big one. There are two main issues here:
 1. **False Sharing:** The variables may be present on the same cache line.
 2. **Ping Pong Effect:** The bus snooping problem arises regarding how at each step one core cancels the cache validity of the other.
@@ -240,34 +241,29 @@ How will this help?
 
     Now, let's replay our scenario:
 
-    Step 1: Core 1 (Consumer) reads a value and calls updateNextReadIndex(). It modifies next_index_to_read.
+    **Step 1**: Core 1 (Consumer) reads a value and calls updateNextReadIndex(). It modifies next_index_to_read.
 
-    The Change: It sends an invalidation signal ONLY for Cache Line X.
-
-    The Result: Core 2 (Producer) sees the signal. It checks its cache. "Do I have Line X? Yes. Okay, invalidating Line X."
-
-    The Magic: Core 2's Line Y (which holds next_index_to_write) remains VALID. It is untouched!
+    *The Change: It sends an invalidation signal ONLY for Cache Line X.
+    *The Result: Core 2 (Producer) sees the signal. It checks its cache. "Do I have Line X? Yes. Okay, invalidating Line X."
+    *The Magic: Core 2's Line Y (which holds next_index_to_write) remains VALID. It is untouched!
 
 
-    Step 2: Core 2 (Producer) wants to write data. It calls getNextWriteIndex().
+    **Step 2**: Core 2 (Producer) wants to write data. It calls getNextWriteIndex().
 
-    The Change: It reads next_index_to_write from Line Y.
-
-    The Result: Since Line Y was never invalidated, this is a L1 Cache Hit. It takes ~1 nanosecond. Instant. No bus snooping required for this variable.
-
-
-    Step 3: Core 2 writes data and calls updateWriteIndex(). It modifies next_index_to_write.
-
-    The Change: It invalidates Line Y.
-
-    The Result: Core 1 invalidates its copy of Line Y. But Core 1's Line X (holding next_index_to_read) stays valid.
+    *The Change: It reads next_index_to_write from Line Y.
+    *The Result: Since Line Y was never invalidated, this is a L1 Cache Hit. It takes ~1 nanosecond. Instant. No bus snooping required for this variable.
 
 
-    Step 4: Core 1 calls getNextReadIndex().
+    **Step 3**: Core 2 writes data and calls updateWriteIndex(). It modifies next_index_to_write.
 
-    The Change: It reads next_index_to_read from Line X.
+    *The Change: It invalidates Line Y.
+    *The Result: Core 1 invalidates its copy of Line Y. But Core 1's Line X (holding next_index_to_read) stays valid.
 
-    The Result: L1 Cache Hit.
+
+    **Step 4**: Core 1 calls getNextReadIndex().
+
+    *The Change: It reads next_index_to_read from Line X.
+    *The Result: L1 Cache Hit.
 
 
     By simply adding alignas(64), we completely stopped the Producer and Consumer from stepping on each other's toes when they are just minding their own business (updating their own indices). This eliminates "False Sharing" and gives us a nice performance bump.
