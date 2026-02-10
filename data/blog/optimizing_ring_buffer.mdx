@@ -243,25 +243,36 @@ How will this help?
     Step 1: Core 1 (Consumer) reads a value and calls updateNextReadIndex(). It modifies next_index_to_read.
 
     The Change: It sends an invalidation signal ONLY for Cache Line X.
+
     The Result: Core 2 (Producer) sees the signal. It checks its cache. "Do I have Line X? Yes. Okay, invalidating Line X."
+
     The Magic: Core 2's Line Y (which holds next_index_to_write) remains VALID. It is untouched!
 
+
     Step 2: Core 2 (Producer) wants to write data. It calls getNextWriteIndex().
+
     The Change: It reads next_index_to_write from Line Y.
+
     The Result: Since Line Y was never invalidated, this is a L1 Cache Hit. It takes ~1 nanosecond. Instant. No bus snooping required for this variable.
 
+
     Step 3: Core 2 writes data and calls updateWriteIndex(). It modifies next_index_to_write.
+
     The Change: It invalidates Line Y.
+
     The Result: Core 1 invalidates its copy of Line Y. But Core 1's Line X (holding next_index_to_read) stays valid.
 
+
     Step 4: Core 1 calls getNextReadIndex().
+
     The Change: It reads next_index_to_read from Line X.
 
     The Result: L1 Cache Hit.
+
+
     By simply adding alignas(64), we completely stopped the Producer and Consumer from stepping on each other's toes when they are just minding their own business (updating their own indices). This eliminates "False Sharing" and gives us a nice performance bump.
 
-    But... We Are Not Done Yet (The "Ping Pong" Problem)
-    You might think, "Great! Zero bus traffic!" Unfortunately, no. We still have a massive problem.
+    But... We Are Not Done Yet, you might think, "Great! Zero bus traffic!" Unfortunately, no. We still have a massive problem.
 
     Look at the code for updateWriteIndex() again:
 
@@ -278,17 +289,22 @@ How will this help?
     Do you see it? To check if the queue is full, the Producer (Core 2) has to read next_index_to_read. But who owns next_index_to_read's valid cache? The Consumer (Core 1).
     So, even though we separated the lines:
 
-        Consumer updates read_index (Invalidates Core 2's copy of Line X).
-        Producer wants to check "Is Queue Full?".
-        Producer tries to read read_index. CACHE MISS.
-        Producer has to snoop the bus and drag the value all the way from Core 1.
-        This is called True Sharing. We actually need the value from the other core. This "Ping-Pong" of the cache line across the bus takes ~20-40 nanoseconds.
+        - Consumer updates read_index (Invalidates Core 2's copy of Line X).
+
+        - Producer wants to check "Is Queue Full?".
+
+        - Producer tries to read read_index. CACHE MISS.
+
+        - Producer has to snoop the bus and drag the value all the way from Core 1.
+
+        - This is called True Sharing. We actually need the value from the other core. This "Ping-Pong" of the cache line across the bus takes ~20-40 nanoseconds.
 
     means the update function still causes bus traffic by the "Ping Pong" effect.
 
     Well... How do we fix this?? This was a difficult thing to find on the internet, but somehow I luckily ended up on an awesome article by The Bearded Sage titled "True Sharing, False Sharing and Ping-Ponging" (It's http and not https, so visit at your own risk). Also, there are some [Slides](https://csg.csail.mit.edu/6.5900/Lectures/L12handout.pdf) on it from the famous Lecture I linked above 
 
-Fix 2: The "Lazy Pointer" (Shadow Indices)
+**Fix 2: The "Lazy Pointer" (Shadow Indices)**
+
 Okay, so we fixed the False Sharing using **alignas(64)**. But we still have a "Traffic" problem. To understand why, we need to look at the geometry of a Ring Buffer.
 
 ### The Problem: Being "Too" Up-To-Date
@@ -325,7 +341,8 @@ Scenario B: Reader is behind Writer (Wrap Around)
 
 Here, the Writer has wrapped around. We know that W to Last is free, AND 0 to R-1 is free. Again, we have a massive chunk of space we can fill blindly.
 
-The Solution: Shadow Indexing
+The Solution: **Shadow Indexing**
+
 The Producer maintains a local variable: cached_read_index. This is a "snapshot" of where the Reader was last time we checked.
 
 Logic: As long as my next_write isn't bumping into my cached_read_index, I don't care where the real Reader is. I assume the queue is safe.
@@ -337,7 +354,9 @@ Let's say we have a Queue of Size 12.
 ![IMAGE_6](/static/images/lock_free_two/IMAGE_6.png)
 
 Real Reader (R) is actually at index 5.
+
 Writer (W) is at index 0.
+
 Writer's Cached Read (CR) starts at 1 (Initialized state so as to keep the 0th index as sacrificial slot at start).
 
 Step-by-Step Execution:
@@ -391,12 +410,13 @@ BUS SNOOP: Writer fetches Real R.
 
 Just like the Writer doesn't need to check for space constantly, the Reader doesn't need to check for data constantly.
 
-The Logic: The "Data Zone"
+**The Logic: The "Data Zone"**
+
 The Reader is at index R. The Writer is at index W. The Reader's #1 rule is: "Do not read if the queue is empty." Mathematically, "Empty" means: R == W.
 
 In the naive implementation, the Reader asks the Writer: "Did you write anything new?" (write_index.load()) before every single read. This is wasteful. If the Writer dropped 100 items into the queue, why ask "Is there data?" 100 times? You should ask once, see 100 items, and consume them all in one go.
 
-The Solution: Shadow Indexing (Reader Edition)
+**The Solution: Shadow Indexing** (Reader Edition)
 The Consumer maintains a local variable: cached_write_index. This is a snapshot of where the Writer was last time we checked.
 
 Logic: As long as my read_index hasn't caught up to my cached_write_index, I know for a fact there is valid data waiting for me. This creates a "Data Zone" a stretch of the buffer that we know contains valid messages.
