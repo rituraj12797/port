@@ -17,11 +17,13 @@ The lock-free queue we just built in the last part was a component needed in one
 
 The system is closely coupled, with each component pinned to a different CPU core. These components/threads communicate with each other via this lock-free queue.
 
-Notice how this system is using 12 of these LFQs ( Green Ones represent bi directional lock free queues which are implemented by using 2 unidirectional ones' internally)? Say if data needs to travel from Comp 6 --> Comp 3 ---> Comp 2 ---> Comp 1 ----> Comp 6; it needs to go through 4 threads, and in total 4 LFQs. Now, the total time for the data to just get inside these queues and then get popped out from them will be = **(read_latency + write_latency)**.
+Notice how this system is using 12 of these LFQs ( Green Ones represent bi directional lock free queues which are implemented by using 2 unidirectional ones' internally)? Say if data needs to travel from Comp 6 → Comp 3 → Comp 2 → Comp 1 → Comp 6; it needs to go through 4 threads, and in total 4 LFQs. Now, the total time for the data to just get inside these queues and then get popped out from them will be = **(read_latency + write_latency)**.
 
-Total time in ingestion + extraction of data from these queues in the whole cycle = ** 4(read_latency + write_latency) **.
+``` Math
+Total Time = Time (ingestion + extraction)  = 4(read_latency + write_latency)
+```
 
-If we compute this for our naive implementation this results in ** 4(77 + 83) ns = 640 nanoseconds **.
+If we compute this for our naive implementation this results in **4(77 + 83) ns = 640 nanoseconds**.
 This means 640 ns is just the cost of data/messages flowing through these channels (assuming the components do their work in 0 ns, which let’s be honest is pure science fiction). Once we add the actual processing overhead, we’re pretty much doomed to end up in the microsecond latency range.
 So, in order to minimize this overall latency, we try to optimize what we have in our hands: the lock-free queues.
 
@@ -49,7 +51,7 @@ This is the big one. There are two main issues here:
 
 So, we will first look into how we are going to optimize the wrap-around logic (if the pointer points to the last index, the net update will make it point to the 0th index). 
 
-I will assume that you already know how a modulo operator works: ** x mod y ** simply results in the remainder we obtain after dividing **x** by **y**.
+I will assume that you already know how a modulo operator works: **x mod y** simply results in the remainder we obtain after dividing **x** by **y**.
     
 So why is the modulo operator a problem? Well, because it takes 30 to 40 CPU cycles on average (indicative purpose only, exact numbers may vary). We can optimize it to a single CPU cycle.
 
@@ -145,10 +147,10 @@ public :
 
 Now notice that we have 4 functions related to these 2 variables:
 
-1. **getNextReadIndex()** -> returns the next index to read from.
-2. **getNextWriteIndex()** -> returns the next index to write to.
-3. **updateNextReadIndex()** -> update the read index.
-4. **updateWriteIndex()** -> update the write index.
+1. **getNextReadIndex()** → returns the next index to read from.
+2. **getNextWriteIndex()** → returns the next index to write to.
+3. **updateNextReadIndex()** →  update the read index.
+4. **updateWriteIndex()** → update the write index.
 
 Consider how we use this LF queue: we have 2 threads (producer and consumer). The consumer thread is pinned on **Core 1** and the producer thread is pinned on **Core 2**.
 
@@ -186,7 +188,7 @@ However, all of these functions need **both** of these atomic variables whenever
 
 ![IMAGE_S6](/static/images/lock_free_two/IMAGE_S6.png)
 
-Now you might be wondering: **next_index_to_write** wasn't modified, so why was it invalidated? **Simply because it was lying on the same cache line as **next_index_to_read*.*
+Now you might be wondering: **next_index_to_write** wasn't modified, so why was it invalidated? Simply because it was lying on the same cache line as **next_index_to_read**.
 
 **Step 7:** Now that Core 2 has the correct index, it writes to the queue and calls **updateWriteIndex()**, which updates **next_index_to_write** and sends an **Invalidate** signal to all cores.
 
@@ -213,10 +215,10 @@ And The Cycle Continues Again from Step 1.
 
 And the cycle continues!
 
-*   When reader consumes -> it invalidates writer's cache.
-*   When writer needs to write -> it hits the bus to fetch data.
-*   When writer writes -> it invalidates reader's cache.
-*   When reader needs to read -> it hits the bus to fetch data.
+*   When reader consumes → it invalidates writer's cache.
+*   When writer needs to write → it hits the bus to fetch data.
+*   When writer writes → it invalidates reader's cache.
+*   When reader needs to read → it hits the bus to fetch data.
 
 So what is the core problem? **False Sharing.** The writer is invalidating the read index, and the reader is invalidating the write index.
 
@@ -295,9 +297,9 @@ Imagine the Producer (Writer) is at index W and the Consumer (Reader) is at inde
 
 In our naive code, the Producer asks the Consumer: *"Hey, where are you exactly?"* (**read_index.load()**) before every single write.
 
-*   Write 1: "Where are you?" -> "I'm at 50." -> "Okay, I write to 1."
-*   Write 2: "Where are you?" -> "I'm at 50." -> "Okay, I write to 2."
-*   Write 3: "Where are you?" -> "I'm at 51." -> "Okay, I write to 3."
+*   Write 1: "Where are you?" → "I'm at 50." → "Okay, I write to 1."
+*   Write 2: "Where are you?" → "I'm at 50." → "Okay, I write to 2."
+*   Write 3: "Where are you?" → "I'm at 51." → "Okay, I write to 3."
 
 Every time the Producer asks "Where are you?", it forces a bus transaction if the Consumer has updated the index. This is expensive. We don't need to know *exactly* where the Reader is. We just need to know if it is *here* (where we are going to write) or not.
 
@@ -347,9 +349,9 @@ Writer updates CR = 5.
 
 
 Writer writes to Index 0.
-Writer wants to write to Index 1. next_write = 2. Does 2 == CR (5)? No. -> Action: Write immediately! (Zero Bus Traffic).
-Writer wants to write to Index 2. next_write = 3. Does 3 == CR (5)? No. -> Action: Write immediately! (Zero Bus Traffic).
-Writer wants to write to Index 3. next_write = 4. Does 4 == CR (5)? No. -> Action: Write immediately! (Zero Bus Traffic).
+Writer wants to write to Index 1. next_write = 2. Does 2 == CR (5)? No. → Action: Write immediately! (Zero Bus Traffic).
+Writer wants to write to Index 2. next_write = 3. Does 3 == CR (5)? No. → Action: Write immediately! (Zero Bus Traffic).
+Writer wants to write to Index 3. next_write = 4. Does 4 == CR (5)? No. → Action: Write immediately! (Zero Bus Traffic).
 Writer wants to write to Index 4. next_write = 5. Does 5 == CR (5)? YES!
 Writer thinks: "Shoot, I think I'm full. My old data says the Reader is at 5. But maybe he moved?"
 
@@ -445,9 +447,9 @@ P99.999 : 501
 
 ```
 
-We Increased our write throughput by 5x in push (9M/seconds -> 55M/seconds) and pop(8 M/seconds -> 40M/seconds) our optimized LF_queue isn't just "faster"—it’s essentially playing a different sport while the standard mutex + std::queue approach spends most of its time in locking, unlocking, our implementation achieves a consistent throughput of ~55M reads/second and ~40M Writes/S for 99% of the time.
+We Increased our write throughput by 5x in push (9M/seconds → 55M/seconds) and pop(8 M/seconds → 40M/seconds) our optimized LF_queue isn't just "faster"—it’s essentially playing a different sport while the standard mutex + std::queue approach spends most of its time in locking, unlocking, our implementation achieves a consistent throughput of ~55M reads/second and ~40M Writes/S for 99% of the time.
 
-One more thing, we drastically reduced the Jitter/latency Spread (p50--->p99) from 50ns(earlier) to ~6-8 ns now, why this matter ??.
+One more thing, we drastically reduced the Jitter/latency Spread (p50--→p99) from 50ns(earlier) to ~6-8 ns now, why this matter ??.
 
 Because in low latency environments, a high average speed is useless if you have "jitter" (those huge P99 spikes). It's like having a code that runs fast but randomly slows down in between. By dropping the jitter using lazy pointers and cache alignment, we ensure that the system doesn’t randomly decide to take a nap while a critical packet is waiting.
 
@@ -496,7 +498,7 @@ namespace internal_lib {
     template<typename T>
     class LFQueue final { 
         // 'final' keyword prevents inheritance, allowing the compiler to 
-        // devirtualize function calls -> performance gains.
+        // devirtualize function calls → performance gains.
     private :
         alignas(64) std::atomic<size_t> next_index_to_read = {0};   
         alignas(64) size_t lazy_write = {0};
