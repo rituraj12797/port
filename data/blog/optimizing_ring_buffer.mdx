@@ -17,11 +17,11 @@ The lock-free queue we just built in the last part was a component needed in one
 
 The system is closely coupled, with each component pinned to a different CPU core. These components/threads communicate with each other via this lock-free queue.
 
-Notice how this system is using 12 of these LFQs ( Green Ones represent bi directional lock free queues which are implemented by using 2 unidirectional ones' internally)? Say if data needs to travel from Comp 6 --> Comp 3 ---> Comp 2 ---> Comp 1 ----> Comp 6; it needs to go through 4 threads, and in total 4 LFQs. Now, the total time for the data to just get inside these queues and then get popped out from them will be = `(read_latency + write_latency)`.
+Notice how this system is using 12 of these LFQs ( Green Ones represent bi directional lock free queues which are implemented by using 2 unidirectional ones' internally)? Say if data needs to travel from Comp 6 --> Comp 3 ---> Comp 2 ---> Comp 1 ----> Comp 6; it needs to go through 4 threads, and in total 4 LFQs. Now, the total time for the data to just get inside these queues and then get popped out from them will be = **(read_latency + write_latency)**.
 
-Total time in ingestion + extraction of data from these queues in the whole cycle = `4 * (read_latency + write_latency)`.
+Total time in ingestion + extraction of data from these queues in the whole cycle = ** 4(read_latency + write_latency) **.
 
-If we compute this for our naive implementation this results in `4 * (77 + 83) ns = 640 nanoseconds`.
+If we compute this for our naive implementation this results in ** 4(77 + 83) ns = 640 nanoseconds **.
 This means 640 ns is just the cost of data/messages flowing through these channels (assuming the components do their work in 0 ns, which let’s be honest is pure science fiction). Once we add the actual processing overhead, we’re pretty much doomed to end up in the microsecond latency range.
 So, in order to minimize this overall latency, we try to optimize what we have in our hands: the lock-free queues.
 
@@ -49,11 +49,11 @@ This is the big one. There are two main issues here:
 
 So, we will first look into how we are going to optimize the wrap-around logic (if the pointer points to the last index, the net update will make it point to the 0th index). 
 
-I will assume that you already know how a modulo operator works: `x mod y` simply results in the remainder we obtain after dividing `x` by `y`.
+I will assume that you already know how a modulo operator works: ** x mod y ** simply results in the remainder we obtain after dividing **x** by **y**.
     
 So why is the modulo operator a problem? Well, because it takes 30 to 40 CPU cycles on average (indicative purpose only, exact numbers may vary). We can optimize it to a single CPU cycle.
 
-Damn!!! But how?? The answer is very simple: using bitwise `&` (AND). How? We will look through an example.
+Damn!!! But how?? The answer is very simple: using bitwise **&** (AND). How? We will look through an example.
 
 Below is a table, just have a look at it:
             
@@ -72,15 +72,19 @@ Below is a table, just have a look at it:
 | ... | ... | ... |
 | 14 | (15)%8 = 7 | 15 & 7 = 7 |
 
-Surprisingly, the modulo-based incrementor and `&` based incrementor are behaving the same way, right? There is logic behind this. 
+Surprisingly, the modulo-based incrementor and **&** based incrementor are behaving the same way, right? There is logic behind this. 
 
-A number of the form `2^y - 1` has all of its bits from the MSB to the LSB set as 1. We will call this number a **mask**. So it kind of acts as a limiter. You perform bitwise AND of the mask with any other number `x`, and (if x \<= mask) it will result in the same number `x`.
+A number of the form **2^y - 1** has all of its bits from the MSB to the LSB set as 1. We will call this number a **mask**. So it kind of acts as a limiter. You perform bitwise AND of the mask with any other number `x`, and (if x \<= mask) it will result in the same number `x`.
 
-But if you do a bitwise AND with a number `x` which is `> mask`, then when we do `x & mask`, all the bits of the result will be 0 before the MSB of the mask (as those bits are set as 0 in the mask), and the rest of the bits will stay as they are. So it effectively slashes the bits after MSB and the number results in the wrapped form.
+But if you do a bitwise AND with a number **x** which is **> mask**, then when we do **x & mask**, all the bits of the result will be 0 before the MSB of the mask (as those bits are set as 0 in the mask), and the rest of the bits will stay as they are. So it effectively slashes the bits after MSB and the number results in the wrapped form.
 
-So effectively what we can do is: we set the size of our buffer equal to a power of 2. Say we keep it as `2^20`, so we define a `mask = 2^20 - 1`.
+So effectively what we can do is: we set the size of our buffer equal to a power of 2. Say we keep it as **2^20**, so we define 
 
-Incrementing `index --> (index+1) % size` is strictly mathematically equivalent to `index --> (index+1) & mask`. The difference is that bitwise operations happen in a single CPU cycle, saving us tons of time.
+``` Math
+mask = 2^20 - 1
+```
+
+Incrementing **index → (index+1) % size** is strictly mathematically equivalent to **index → (index+1) & mask**. The difference is that bitwise operations happen in a single CPU cycle, saving us tons of time.
 
 
 ### 2. Addressing the Bus Traffic Problem
@@ -134,21 +138,21 @@ public :
     }	
 };
 ```
-   As you can see here, we have 2 atomic variables: `next_index_to_read` and `next_index_to_write`. Since they are atomic integers, they take 8 bytes of memory. An L1 cache line is generally 64 Bytes. Since these 2 variables lie next to each other in memory, they most likely sit in the **same** cache line.
+   As you can see here, we have 2 atomic variables: **next_index_to_read** and **next_index_to_write**. Since they are atomic integers, they take 8 bytes of memory. An L1 cache line is generally 64 Bytes. Since these 2 variables lie next to each other in memory, they most likely sit in the **same** cache line.
 
 ![INSIDE_A_CPU](/static/images/lock_free_two/IMAGE_2.png)
 
 
 Now notice that we have 4 functions related to these 2 variables:
 
-1. `getNextReadIndex()` -> returns the next index to read from.
-2. `getNextWriteIndex()` -> returns the next index to write to.
-3. `updateNextReadIndex()` -> update the read index.
-4. `updateWriteIndex()` -> update the write index.
+1. **getNextReadIndex()** -> returns the next index to read from.
+2. **getNextWriteIndex()** -> returns the next index to write to.
+3. **updateNextReadIndex()** -> update the read index.
+4. **updateWriteIndex()** -> update the write index.
 
 Consider how we use this LF queue: we have 2 threads (producer and consumer). The consumer thread is pinned on **Core 1** and the producer thread is pinned on **Core 2**.
 
-Means Core 1 (consumer) accesses `getNextReadIndex` and `updateNextReadIndex`, and Core 2 (producer) has access to `getNextWriteIndex` and `updateWriteIndex`.
+Means Core 1 (consumer) accesses **getNextReadIndex** and **updateNextReadIndex**, and Core 2 (producer) has access to **getNextWriteIndex** and **updateWriteIndex**.
 
 However, all of these functions need **both** of these atomic variables whenever they execute. This means Core 1 and Core 2 store both variables in their L1 cache.
 
@@ -158,23 +162,23 @@ However, all of these functions need **both** of these atomic variables whenever
 
 ### The MESI Cycle of Doom
 
-**Step 1:** When Core 1 reads an entry from the ring buffer, it calls `updateNextReadIndex()`. This updates `next_index_to_read`. It sends an **Invalidate** signal to all cores which use this variable, and screams: *"Invalidate your cache line which contains this variable!"* (MESI protocol).
+**Step 1:** When Core 1 reads an entry from the ring buffer, it calls **updateNextReadIndex()**. This updates **next_index_to_read**. It sends an **Invalidate** signal to all cores which use this variable, and screams: *"Invalidate your cache line which contains this variable!"* (MESI protocol).
 
 ![IMAGE_S1](/static/images/lock_free_two/IMAGE_S1.png)
 
-**Step 2:** This invalidate signal is picked up by Core 2. It sees its 2nd L1 line contains this variable, so it invalidates this **whole** cache line. Remember that `next_index_to_write` also lay on this line! So because the *line* is invalid, that variable's cache is also invalidated.
+**Step 2:** This invalidate signal is picked up by Core 2. It sees its 2nd L1 line contains this variable, so it invalidates this **whole** cache line. Remember that **next_index_to_write** also lay on this line! So because the *line* is invalid, that variable's cache is also invalidated.
 
 ![IMAGE_S2](/static/images/lock_free_two/IMAGE_S2.png)
 
-**Step 3:** Core 1 now updates the value of `next_index_to_read` and now it snoops the CPU bus to look for any request of variables lying on its 1st L1 cache line.
+**Step 3:** Core 1 now updates the value of **next_index_to_read** and now it snoops the CPU bus to look for any request of variables lying on its 1st L1 cache line.
 
 ![IMAGE_S3](/static/images/lock_free_two/IMAGE_S3.png)
 
-**Step 4:** Now say Core 2 (the producer) needs to write something. It sees that `next_index_to_write` is invalidated. 
+**Step 4:** Now say Core 2 (the producer) needs to write something. It sees that **next_index_to_write** is invalidated. 
 
 ![IMAGE_S4](/static/images/lock_free_two/IMAGE_S4.png)
 
-**Step 5:** It sends a **read request** to the bus to get the updated value of `next_index_to_write`.
+**Step 5:** It sends a **read request** to the bus to get the updated value of **next_index_to_write**.
 
 ![IMAGE_S5](/static/images/lock_free_two/IMAGE_S5.png)
 
@@ -182,13 +186,13 @@ However, all of these functions need **both** of these atomic variables whenever
 
 ![IMAGE_S6](/static/images/lock_free_two/IMAGE_S6.png)
 
-Now you might be wondering: `next_index_to_write` wasn't modified, so why was it invalidated? ==> **Simply because it was lying on the same cache line as `next_index_to_read`.**
+Now you might be wondering: **next_index_to_write** wasn't modified, so why was it invalidated? **Simply because it was lying on the same cache line as **next_index_to_read*.*
 
-**Step 7:** Now that Core 2 has the correct index, it writes to the queue and calls `updateWriteIndex()`, which updates `next_index_to_write` and sends an **Invalidate** signal to all cores.
+**Step 7:** Now that Core 2 has the correct index, it writes to the queue and calls **updateWriteIndex()**, which updates **next_index_to_write** and sends an **Invalidate** signal to all cores.
 
 ![IMAGE_S7](/static/images/lock_free_two/IMAGE_S7.png)
 
-**Step 8:** Core 1 catches this signal and invalidates its L1 cache line which contains `next_index_to_write` (and tragically, `next_index_to_read` too).
+**Step 8:** Core 1 catches this signal and invalidates its L1 cache line which contains **next_index_to_write** (and tragically, **next_index_to_read** too).
 
 ![IMAGE_S8](/static/images/lock_free_two/IMAGE_S8.png)
 
@@ -283,13 +287,13 @@ How will this help?
     Well... How do we fix this?? This was a difficult thing to find on the internet, but somehow I luckily ended up on an awesome article by The Bearded Sage titled "True Sharing, False Sharing and Ping-Ponging" (It's http and not https, so visit at your own risk). Also, there are some [Slides](https://csg.csail.mit.edu/6.5900/Lectures/L12handout.pdf) on it from the famous Lecture I linked above 
 
 Fix 2: The "Lazy Pointer" (Shadow Indices)
-Okay, so we fixed the False Sharing using `alignas(64)`. But we still have a "Traffic" problem. To understand why, we need to look at the geometry of a Ring Buffer.
+Okay, so we fixed the False Sharing using **alignas(64)**. But we still have a "Traffic" problem. To understand why, we need to look at the geometry of a Ring Buffer.
 
 ### The Problem: Being "Too" Up-To-Date
 
 Imagine the Producer (Writer) is at index W and the Consumer (Reader) is at index R. The Producer's #1 rule is: "Do not write if the queue is full." Mathematically, "Full" means: `(W + 1) % mod == R`.
 
-In our naive code, the Producer asks the Consumer: *"Hey, where are you exactly?"* (`read_index.load()`) before every single write.
+In our naive code, the Producer asks the Consumer: *"Hey, where are you exactly?"* (**read_index.load()**) before every single write.
 
 *   Write 1: "Where are you?" -> "I'm at 50." -> "Okay, I write to 1."
 *   Write 2: "Where are you?" -> "I'm at 50." -> "Okay, I write to 2."
