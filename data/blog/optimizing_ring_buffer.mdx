@@ -17,7 +17,7 @@ The lock-free queue we just built in the last part was a component needed in one
 
 The system is closely coupled, with each component pinned to a different CPU core. These components/threads communicate with each other via this lock-free queue.
 
-Notice how this system is using 12 of these LFQs ( Green Ones represent bi directional lock free queues which are implemented by using 2 unidirectional ones' internally)? Say if data needs to travel from Comp 6 → Comp 3 → Comp 2 → Comp 1 → Comp 6; it needs to go through 4 threads, and in total 4 LFQs. Now, the total time for the data to just get inside these queues and then get popped out from them will be = **(read_latency + write_latency)**.
+Notice how this system is using 12 of these LFQs ( Green Ones represent bi directional lock free queues which are implemented by using 2 unidirectional ones' internally)? Say if data needs to travel from Comp 6  →  Comp 3  →  Comp 2  →  Comp 1  →  Comp 6; it needs to go through 4 threads, and in total 4 LFQs. Now, the total time for the data to just get inside these queues and then get popped out from them will be = **(read_latency + write_latency)**.
 
 ``` Math
 Total Time = Time (ingestion + extraction)  = 4(read_latency + write_latency)
@@ -76,7 +76,7 @@ Below is a table, just have a look at it:
 
 Surprisingly, the modulo-based incrementor and **&** based incrementor are behaving the same way, right? There is logic behind this. 
 
-A number of the form **2^y - 1** has all of its bits from the MSB to the LSB set as 1. We will call this number a **mask**. So it kind of acts as a limiter. You perform bitwise AND of the mask with any other number `x`, and (if x \<= mask) it will result in the same number `x`.
+A number of the form **2^y - 1** has all of its bits from the MSB to the LSB set as 1. We will call this number a **mask**. So it kind of acts as a limiter. You perform bitwise AND of the mask with any other number **x**, and (if x \<= mask) it will result in the same number **x**.
 
 But if you do a bitwise AND with a number **x** which is **> mask**, then when we do **x & mask**, all the bits of the result will be 0 before the MSB of the mask (as those bits are set as 0 in the mask), and the rest of the bits will stay as they are. So it effectively slashes the bits after MSB and the number results in the wrapped form.
 
@@ -86,13 +86,13 @@ So effectively what we can do is: we set the size of our buffer equal to a power
 mask = 2^20 - 1
 ```
 
-Incrementing **index → (index+1) % size** is strictly mathematically equivalent to **index → (index+1) & mask**. The difference is that bitwise operations happen in a single CPU cycle, saving us tons of time.
+Incrementing **index  →  (index+1) % size** is strictly mathematically equivalent to **index  →  (index+1) & mask**. The difference is that bitwise operations happen in a single CPU cycle, saving us tons of time.
 
 
 ### 2. Addressing the Bus Traffic Problem
 
 Now to the main problem. This section involves some concepts around Bus Snooping, Cache Coherence, the MESI protocol, and understanding L1/L2/L3 cache structures. I would suggest you go through this awesome lecture: [YT Link](https://www.youtube.com/watch?v=83jOKVb_HTM).
-Also, you should know about the structure of the L1 cache inside the CPU—how data is stored and read from the cache in the form of "lines" and not individual variables. Link: [Algorithmica Cache Lines](https://en.algorithmica.org/hpc/cpu-cache/cache-lines/).
+Also, you should know about the structure of the L1 cache inside the CPU how data is stored and read from the cache in the form of "lines" and not individual variables. Link: [Algorithmica Cache Lines](https://en.algorithmica.org/hpc/cpu-cache/cache-lines/).
 
 Okay, we start now. Let us have a look at our current code:
 
@@ -147,10 +147,10 @@ public :
 
 Now notice that we have 4 functions related to these 2 variables:
 
-1. **getNextReadIndex()** → returns the next index to read from.
-2. **getNextWriteIndex()** → returns the next index to write to.
-3. **updateNextReadIndex()** →  update the read index.
-4. **updateWriteIndex()** → update the write index.
+1. **getNextReadIndex()**  →  returns the next index to read from.
+2. **getNextWriteIndex()**  →  returns the next index to write to.
+3. **updateNextReadIndex()**  →   update the read index.
+4. **updateWriteIndex()**  →  update the write index.
 
 Consider how we use this LF queue: we have 2 threads (producer and consumer). The consumer thread is pinned on **Core 1** and the producer thread is pinned on **Core 2**.
 
@@ -215,10 +215,10 @@ And The Cycle Continues Again from Step 1.
 
 And the cycle continues!
 
-*   When reader consumes → it invalidates writer's cache.
-*   When writer needs to write → it hits the bus to fetch data.
-*   When writer writes → it invalidates reader's cache.
-*   When reader needs to read → it hits the bus to fetch data.
+*   When reader consumes  →  it invalidates writer's cache.
+*   When writer needs to write  →  it hits the bus to fetch data.
+*   When writer writes  →  it invalidates reader's cache.
+*   When reader needs to read  →  it hits the bus to fetch data.
 
 So what is the core problem? **False Sharing.** The writer is invalidating the read index, and the reader is invalidating the write index.
 
@@ -293,13 +293,17 @@ Okay, so we fixed the False Sharing using **alignas(64)**. But we still have a "
 
 ### The Problem: Being "Too" Up-To-Date
 
-Imagine the Producer (Writer) is at index W and the Consumer (Reader) is at index R. The Producer's #1 rule is: "Do not write if the queue is full." Mathematically, "Full" means: `(W + 1) % mod == R`.
+Imagine the Producer (Writer) is at index W and the Consumer (Reader) is at index R. The Producer's #1 rule is: "Do not write if the queue is full." Mathematically, "Full" means: 
+
+``` Math
+(W + 1) % mod == R.
+```
 
 In our naive code, the Producer asks the Consumer: *"Hey, where are you exactly?"* (**read_index.load()**) before every single write.
 
-*   Write 1: "Where are you?" → "I'm at 50." → "Okay, I write to 1."
-*   Write 2: "Where are you?" → "I'm at 50." → "Okay, I write to 2."
-*   Write 3: "Where are you?" → "I'm at 51." → "Okay, I write to 3."
+*   Write 1: "Where are you?"  →  "I'm at 50."  →  "Okay, I write to 1."
+*   Write 2: "Where are you?"  →  "I'm at 50."  →  "Okay, I write to 2."
+*   Write 3: "Where are you?"  →  "I'm at 51."  →  "Okay, I write to 3."
 
 Every time the Producer asks "Where are you?", it forces a bus transaction if the Consumer has updated the index. This is expensive. We don't need to know *exactly* where the Reader is. We just need to know if it is *here* (where we are going to write) or not.
 
@@ -349,9 +353,9 @@ Writer updates CR = 5.
 
 
 Writer writes to Index 0.
-Writer wants to write to Index 1. next_write = 2. Does 2 == CR (5)? No. → Action: Write immediately! (Zero Bus Traffic).
-Writer wants to write to Index 2. next_write = 3. Does 3 == CR (5)? No. → Action: Write immediately! (Zero Bus Traffic).
-Writer wants to write to Index 3. next_write = 4. Does 4 == CR (5)? No. → Action: Write immediately! (Zero Bus Traffic).
+Writer wants to write to Index 1. next_write = 2. Does 2 == CR (5)? No.  →  Action: Write immediately! (Zero Bus Traffic).
+Writer wants to write to Index 2. next_write = 3. Does 3 == CR (5)? No.  →  Action: Write immediately! (Zero Bus Traffic).
+Writer wants to write to Index 3. next_write = 4. Does 4 == CR (5)? No.  →  Action: Write immediately! (Zero Bus Traffic).
 Writer wants to write to Index 4. next_write = 5. Does 5 == CR (5)? YES!
 Writer thinks: "Shoot, I think I'm full. My old data says the Reader is at 5. But maybe he moved?"
 
@@ -387,7 +391,7 @@ In the naive implementation, the Reader asks the Writer: "Did you write anything
 The Solution: Shadow Indexing (Reader Edition)
 The Consumer maintains a local variable: cached_write_index. This is a snapshot of where the Writer was last time we checked.
 
-Logic: As long as my read_index hasn't caught up to my cached_write_index, I know for a fact there is valid data waiting for me. This creates a "Data Zone"—a stretch of the buffer that we know contains valid messages.
+Logic: As long as my read_index hasn't caught up to my cached_write_index, I know for a fact there is valid data waiting for me. This creates a "Data Zone" a stretch of the buffer that we know contains valid messages.
 
 The Producer maintains a shadow index of the Consumer, and the Consumer maintains a shadow index of the Producer.
 
@@ -447,9 +451,9 @@ P99.999 : 501
 
 ```
 
-We Increased our write throughput by 5x in push (9M/seconds → 55M/seconds) and pop(8 M/seconds → 40M/seconds) our optimized LF_queue isn't just "faster"—it’s essentially playing a different sport while the standard mutex + std::queue approach spends most of its time in locking, unlocking, our implementation achieves a consistent throughput of ~55M reads/second and ~40M Writes/S for 99% of the time.
+We Increased our write throughput by 5x in push (9M/seconds  →  55M/seconds) and pop(8 M/seconds  →  40M/seconds) our optimized LF_queue isn't just "faster" it’s essentially playing a different sport while the standard mutex + std::queue approach spends most of its time in locking, unlocking, our implementation achieves a consistent throughput of ~55M reads/second and ~40M Writes/S for 99% of the time.
 
-One more thing, we drastically reduced the Jitter/latency Spread (p50--→p99) from 50ns(earlier) to ~6-8 ns now, why this matter ??.
+One more thing, we drastically reduced the Jitter/latency Spread (p50 → p99) from 50ns(earlier) to ~6-8 ns now, why this matter ??.
 
 Because in low latency environments, a high average speed is useless if you have "jitter" (those huge P99 spikes). It's like having a code that runs fast but randomly slows down in between. By dropping the jitter using lazy pointers and cache alignment, we ensure that the system doesn’t randomly decide to take a nap while a critical packet is waiting.
 
@@ -466,15 +470,13 @@ Bus Requests = 1
 
 Depending on the chunk size, we managed to reduce bus traffic by:
 
+``` Math
 Percentage Reduction = ((10,000 - 1) / 10,000) * 100
+```
 
-We reduced the noise by 99.99%.
+We reduced the noise by **99.99%**.
 
-It took
-
-a bit of bit-shuffling and some "lazy" logic, but when being lazy results in saving 10,000 trips across the CPU bus, I’m happy to call it an architectural masterpiece (I am not the one who invented this, I just used it).
-
-
+It took a bit of bit-shuffling and some "lazy" logic, but when being lazy results in saving 10,000 trips across the CPU bus, I’m happy to call it an architectural masterpiece.
 
 
     
@@ -498,7 +500,7 @@ namespace internal_lib {
     template<typename T>
     class LFQueue final { 
         // 'final' keyword prevents inheritance, allowing the compiler to 
-        // devirtualize function calls → performance gains.
+        // devirtualize function calls  →  performance gains.
     private :
         alignas(64) std::atomic<size_t> next_index_to_read = {0};   
         alignas(64) size_t lazy_write = {0};
