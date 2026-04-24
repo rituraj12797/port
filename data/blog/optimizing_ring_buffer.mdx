@@ -412,7 +412,7 @@ The Reader is at index R. The Writer is at index W. The Reader's #1 rule is: "Do
 
 In the naive implementation, the Reader asks the Writer: "Did you write anything new?" (write_index.load()) before every single read. This is wasteful. If the Writer dropped 100 items into the queue, why ask "Is there data?" 100 times? You should ask once, see 100 items, and consume them all in one go.
 
-**The Solution: Shadow Indexing** (Reader Edition)
+**The Solution: Shadow Indexing**
 The Consumer maintains a local variable: cached_write_index. This is a snapshot of where the Writer was last time we checked.
 
 Logic: As long as my read_index hasn't caught up to my cached_write_index, I know for a fact there is valid data waiting for me. This creates a "Data Zone" a stretch of the buffer that we know contains valid messages.
