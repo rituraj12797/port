@@ -1,9 +1,8 @@
 {
   "general": 1,
   "cloud": 2,
-  "system-design": 3,
+  "system-design": 2,
   "c": 2,
   "low-level": 2,
-  "operating-systems": 2,
-  "must-read": 1
+  "operating-systems": 2
 }
